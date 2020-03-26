@@ -31,6 +31,7 @@
 #include "jshardwareTimer.h"
 #include "jshardwarePWM.h"
 #include "jshardwarePulse.h"
+#include "jshardwareRMT.h"
 
 #ifdef BLUETOOTH
 #include "BLE/esp32_gap_func.h"

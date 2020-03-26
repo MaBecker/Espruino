@@ -16,7 +16,7 @@
  */
 #include "jsutils.h"
  
-#include "jshardwarePulse.h"
+#include "jshardwareRMT.h"
 #include "driver/rmt.h"
 
 #include <stdio.h>
@@ -25,32 +25,6 @@
 
 rmt_item32_t items[1];
 
-int getRMTIndex(Pin pin){
-  int i;
-  for(i = 0; i < RMTChannelMax; i++){
-	if(RMTChannels[i].pin == pin) return i;	
-  }
-  return -1;	
-}
-int getFreeRMT(Pin pin){
-  for(int i = 0; i < RMTChannelMax; i++){
-	if(RMTChannels[i].pin == RMTPinEmpty) {
-	  RMTChannels[i].pin = pin;	
-	  return i;
-	}
-  }
-  return -1;
-}
-
-void RMTReset(){
-  for(int i = 0; i < RMTChannelMax; i++){
-    if(RMTChannels[i].pin != RMTPinEmpty) rmt_driver_uninstall(i);
-  }
-}  
-void RMTInit(){
-  int i;
-  for(i = 0; i < RMTChannelMax; i++) RMTChannels[i].pin = RMTPinEmpty;
-}
 int RMTInitChannel(Pin pin, bool pulsePolarity){
   rmt_config_t config;
   int i = getFreeRMT(pin);
@@ -81,7 +55,8 @@ void setPulseLow(int duration){
   items[0].duration1 = 10;
   items[0].level1 = 1;
 }
-rmt_item32_t *setPulseHigh(int duration){
+
+void setPulseHigh(int duration){
   items[0].duration0 = duration;
   items[0].level0 = 1;
   items[0].duration1 = 10;
@@ -90,15 +65,23 @@ rmt_item32_t *setPulseHigh(int duration){
 
 //pin to be pulsed. value to be pulsed into the pin. duration in milliseconds to hold the pin.
 void sendPulse(Pin pin, bool pulsePolarity, int duration){
+  
   int i;
+  
+  // get if exist the RMT fot this PIN (future check if it is for Neopixel or sendPulse)
   i = getRMTIndex(pin);
+  
+  // if not ask for a new RMT channel and configure it
   if(i < 0) i = RMTInitChannel(pin,pulsePolarity);
-  if(i >= 0){
+  
+  if(i >= 0)
+	{
     if(pulsePolarity) setPulseLow(duration);else setPulseHigh(duration);
 	rmt_set_pin(i, RMT_MODE_TX, pin); //set pin to rmt, in case that it was reset to GPIO(see jshPinSetValue)
-    rmt_write_items(i, items,1,1);
-  }
+    rmt_write_items(i,items,1,1);
+	}
   else printf("all RMT channels in use\n");
+  
   return;
 }
 	

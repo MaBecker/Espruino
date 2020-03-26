@@ -16,6 +16,7 @@
 #include "jshardwarePWM.h"
 #include "jshardwarePulse.h"
 #include "jshardwareSpi.h"
+#include "jshardwareRMT.h"
 #include "jshardwareESP32.h"
 #include "jswrap_wifi.h" // jswrap_wifi_restore
 

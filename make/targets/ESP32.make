@@ -1,6 +1,6 @@
 ESP_ZIP     = $(PROJ_NAME).tgz
 
-COMPORT?=/dev/ttyUSB0
+SOURCES += targets/esp32/jshardwareRMT.c
 
 $(PROJ_NAME).bin: $(OBJS)
 	$(LD) $(LDFLAGS) -o $(PROJ_NAME).elf -Wl,--start-group $(LIBS) $(OBJS) -Wl,--end-group
@@ -27,10 +27,10 @@ $(ESP_ZIP): $(PROJ_NAME).bin
 
 proj: $(PROJ_NAME).bin $(ESP_ZIP)
 
-flash: $(PROJ_NAME).bin
+flash:
 	python $(ESP_IDF_PATH)/components/esptool_py/esptool/esptool.py \
 	--chip esp32 \
-	--port ${COMPORT} \
+	--port "/dev/ttyUSB0" \
 	--baud 921600 \
 	write_flash \
 	-z \
@@ -43,6 +43,6 @@ flash: $(PROJ_NAME).bin
 erase_flash:
 	python $(ESP_IDF_PATH)/components/esptool_py/esptool/esptool.py \
 	--chip esp32 \
-	--port ${COMPORT}\
+	--port "/dev/ttyUSB0" \
 	--baud 921600 \
 	erase_flash
