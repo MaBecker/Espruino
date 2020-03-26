@@ -9,6 +9,7 @@ CFLAGS+=-Og -Wpointer-arith -Wno-error=unused-function -Wno-error=unused-but-set
 -MMD -MP -std=gnu99 -fstrict-volatile-bitfields -fgnu89-inline -mfix-esp32-psram-cache-issue
 SOURCES += targets/esp32/jshardware.c
 SOURCES += targets/esp32/esp32_neopixel.c
+SOURCES += targets/esp32/jshardwareRMT.c
 INCLUDE += -I$(ROOT)/targets/esp32
 
 ifndef ESP_IDF_PATH
