@@ -441,9 +441,11 @@ void jshPinPulse(
     JsVarFloat pulseTime  //!< The duration in milliseconds to hold the pin.
 ) {
   // ESP32 specific version, replaced by Espruino Style version from nrf52
-  //int duration = (int)pulseTime * 1000; //from millisecs to microsecs
-  //sendPulse(pin, pulsePolarity, duration);
+  // come back for accuracy on 3-2020
+  int duration = (int)pulseTime * 1000; //from millisecs to microsecs
+  sendPulse(pin, pulsePolarity, duration);
 
+/* New universal version for all hardware, but doesn't have accuracy in ESP32  
   // ---- USE TIMER FOR PULSE
   if (!jshIsPinValid(pin)) {
        jsExceptionHere(JSET_ERROR, "Invalid pin!");
@@ -464,6 +466,8 @@ void jshPinPulse(
     // Now set the end of the pulse to happen on a timer
     jstPinOutputAtTime(task.time + jshGetTimeFromMilliseconds(pulseTime), &pin, 1, !pulsePolarity);
   }
+*/
+
 }
 
 

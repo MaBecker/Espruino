@@ -175,19 +175,24 @@ bool esp32_neopixelWrite(Pin pin,unsigned char *rgbData, size_t rgbSize){
   
   int i;		// RMT channel
   
+  jsWarn('API RMT debug : start neopixel write');				// RIC DEBUG
   i=neopixel_init(pin);
   if (i >=0)
-	{  
+	{
+	jsWarn('API RMT debug : RMT channel %d',i);					// RIC DEBUG
 	neopixel_buffer = rgbData;
 	neopixel_len = rgbSize;
 	neopixel_pos = 0;
 	neopixel_half = 0;
 	neopixel_copy(i);
 	if (neopixel_pos < neopixel_len) neopixel_copy(i);
+	jsWarn('API RMT debug : Create sempahore for Neopixel');	// RIC DEBUG
 	neopixel_sem = xSemaphoreCreateBinary();
 	RMT.conf_ch[i].conf1.mem_rd_rst = 1;
 	RMT.conf_ch[i].conf1.tx_start = 1;
+	jsWarn('API RMT debug : Waiting sempahore');				// RIC DEBUG
 	xSemaphoreTake(neopixel_sem, portMAX_DELAY);
+	jsWarn('API RMT debug : sempahore free');					// RIC DEBUG
 	vSemaphoreDelete(neopixel_sem);
 	neopixel_sem = NULL;
 	return true;
