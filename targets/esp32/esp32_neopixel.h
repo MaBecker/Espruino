@@ -19,6 +19,10 @@
 
 //===== neopixel Library
 
+// RMT version
+bool esp32_neopixelWrite_RMT(Pin pin,unsigned char *rgbData, size_t rgbSize);
+
+// looped GPIO version
 bool esp32_neopixelWrite(Pin pin,unsigned char *rgbData, size_t rgbSize);
 
 #endif /* ESP32_NEOPIXEL_H_ */

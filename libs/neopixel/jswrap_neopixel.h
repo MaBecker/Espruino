@@ -15,4 +15,4 @@
 #include "jspin.h"
 #include "jsvar.h"
 
-void jswrap_neopixel_write(Pin pin, JsVar *data);
+void jswrap_neopixel_write(Pin pin, JsVar *data , JsVar *options);

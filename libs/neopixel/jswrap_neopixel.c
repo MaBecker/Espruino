@@ -22,7 +22,7 @@
 #include <espmissingincludes.h>
 #endif
 #ifdef ESP32
-#include "esp32_neopixel.h"
+	#include "esp32_neopixel.h"
 #endif
 #ifdef WIO_LTE
 #include "stm32_ws2812b_driver.h"
@@ -55,7 +55,10 @@ implementation on some devices - hence this library to simplify things.
   "generate" : "jswrap_neopixel_write",
   "params" : [
     ["pin", "pin", "The Pin the LEDs are connected to"],
-    ["data","JsVar","The data to write to the LED strip (must be a multiple of 3 bytes long)"]
+    ["data","JsVar","The data to write to the LED strip (must be a multiple of 3 bytes long)"],
+	["options","JsVar",["Actually we can define for ESP32 if it uses GPIO or RMT",
+						"useRMT = true for RMT to drive Neopixels"
+					   ]]
   ]
 }
 Write to a strip of NeoPixel/WS281x/APA104/APA106/SK6812-style LEDs
@@ -106,7 +109,8 @@ a pullup resistor to 5v on STM32 based boards (nRF52 are not 5v tolerant
 so you can't do this), or can use a level shifter to shift the voltage up
 into the 5v range.
 */
-void jswrap_neopixel_write(Pin pin, JsVar *data) {
+void jswrap_neopixel_write(Pin pin, JsVar *data , JsVar *options)
+{
   JSV_GET_AS_CHAR_ARRAY(rgbData, rgbSize, data);
   if (!rgbData) {
     jsExceptionHere(JSET_ERROR, "Couldn't convert %t to data to send to LEDs", data);
@@ -120,8 +124,17 @@ void jswrap_neopixel_write(Pin pin, JsVar *data) {
     jsExceptionHere(JSET_ERROR, "Data length must be a multiple of 3 (RGB).");
     return;
   }
-
+  
+  #if defined(ESP32)
+	if (jsvGetBoolAndUnLock(jsvObjectGetChild(options, "useRMT", 0)))
+		{
+		esp32_neopixelWrite_RMT(pin,(unsigned char *)rgbData, rgbSize);
+		return;
+		}
+  #endif
+  
   neopixelWrite(pin, (unsigned char *)rgbData, rgbSize);
+  
 }
 
 
@@ -291,13 +304,14 @@ bool neopixelWrite(Pin pin, unsigned char *rgbData, size_t rgbSize) {
 
 #elif defined(ESP32)
 
-bool neopixelWrite(Pin pin, unsigned char *rgbData, size_t rgbSize){
-  return esp32_neopixelWrite(pin,rgbData, rgbSize);
+bool neopixelWrite(Pin pin, unsigned char *rgbData, size_t rgbSize)
+{
+	return esp32_neopixelWrite(pin,rgbData, rgbSize);
 }
 
 #else
 
-bool neopixelWrite(Pin pin, unsigned char *rgbData, size_t rgbSize) {
+bool neopixelWrite(Pin pin, unsigned char *rgbData, size_t rgbSize){
   jsExceptionHere(JSET_ERROR, "Neopixel writing not implemented");
   return false;
 }
