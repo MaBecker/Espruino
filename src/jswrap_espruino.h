@@ -15,6 +15,7 @@
 #include "jshardware.h"
 #include "jsflags.h" // for E.get/setFlags
 
+JsVarFloat jswrap_espruino_getTemperature();
 JsVar *jswrap_espruino_nativeCall(JsVarInt addr, JsVar *signature, JsVar *data);
 
 JsVarFloat jswrap_espruino_clip(JsVarFloat x, JsVarFloat min, JsVarFloat max);
@@ -38,6 +39,8 @@ JsVar *jswrap_espruino_toJS(JsVar *v);
 JsVar *jswrap_espruino_memoryArea(int addr, int len);
 void jswrap_espruino_setBootCode(JsVar *code, bool alwaysExec);
 int jswrap_espruino_setClock(JsVar *options);
+void jswrap_espruino_setConsole(JsVar *device, JsVar *options);
+JsVar *jswrap_espruino_getConsole();
 
 int jswrap_espruino_reverseByte(int v);
 void jswrap_espruino_dumpTimers();
@@ -50,6 +53,7 @@ JsVarInt jswrap_espruino_getAddressOf(JsVar *v, bool flatAddress);
 void jswrap_espruino_mapInPlace(JsVar *from, JsVar *to, JsVar *map, JsVarInt bits);
 JsVar *jswrap_espruino_lookupNoCase(JsVar *haystack, JsVar *needle, bool returnKey);
 JsVar *jswrap_e_dumpStr();
+JsVar *jswrap_espruino_CRC32(JsVar *data);
 JsVar *jswrap_espruino_HSBtoRGB(JsVarFloat hue, JsVarFloat sat, JsVarFloat bri, bool asArray);
 void jswrap_espruino_setPassword(JsVar *pwd);
 void jswrap_espruino_lockConsole();

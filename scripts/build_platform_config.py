@@ -446,6 +446,11 @@ if "MAG" in board.devices:
     codeOut("#define MAG_ADDR "+str(board.devices["MAG"]["addr"]))
   codeOutDevicePins("MAG", "MAG")
 
+if "TEMP" in board.devices:
+  if "addr" in board.devices["TEMP"]:
+    codeOut("#define TEMP_ADDR "+str(board.devices["TEMP"]["addr"]))
+  codeOutDevicePins("TEMP", "TEMP")
+
 if "PRESSURE" in board.devices:
   codeOut("#define PRESSURE_DEVICE \""+board.devices["PRESSURE"]["device"].upper()+"\"")
   codeOut("#define PRESSURE_ADDR "+str(board.devices["PRESSURE"]["addr"]))
@@ -454,8 +459,10 @@ if "PRESSURE" in board.devices:
 if "SPIFLASH" in board.devices:
   codeOut("#define SPIFLASH_BASE 0x40000000UL")
   codeOut("#define SPIFLASH_PAGESIZE 4096")
+  codeOut("#define SPIFLASH_LENGTH "+str(board.devices["SPIFLASH"]["size"]))
   codeOutDevicePins("SPIFLASH", "SPIFLASH")
 
+#for device in ["USB","SD","LCD","JTAG","ESP8266","IR","GPS","ACCEL","MAG","TEMP","PRESSURE","SPIFLASH"]:
 for device in ["USB","SD","LCD","JTAG","ESP8266","IR"]:
   if device in board.devices:
     for entry in board.devices[device]:

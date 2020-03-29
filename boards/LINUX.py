@@ -33,6 +33,7 @@ info = {
 #     'DEFINES+=-DFLASH_64BITS_ALIGNMENT=1', # For testing 64 bit flash writes
 #     'CFLAGS+=-m32', 'LDFLAGS+=-m32', 'DEFINES+=-DUSE_CALLFUNCTION_HACK', # For testing 32 bit builds
      'DEFINES+=-DUSE_FONT_6X8 -DGRAPHICS_PALETTED_IMAGES',
+     'DEFINES+=-DSPIFLASH_BASE=0', # For Testing Flash Strings
      'LINUX=1',
    ]
  }

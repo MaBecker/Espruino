@@ -66,8 +66,6 @@ INCLUDE?=-I$(ROOT) -I$(ROOT)/targets -I$(ROOT)/src -I$(GENDIR)
 LIBS?=
 DEFINES?=
 CFLAGS?=-Wall -Wextra -Wconversion -Werror=implicit-function-declaration -fno-strict-aliasing -g
-CFLAGS+=-Wno-packed-bitfield-compat # remove warnings from packed var usage
-CFLAGS+=-Wno-expansion-to-defined # remove warnings created by Nordic's libs
 CCFLAGS?= # specific flags when compiling cc files
 LDFLAGS?=-Winline -g
 OPTIMIZEFLAGS?=
@@ -520,8 +518,13 @@ ifeq ($(USE_NET),1)
  INCLUDE += -I$(ROOT)/libs/network/esp8266
  SOURCES += \
  libs/network/esp8266/network_esp8266.c\
- libs/network/esp8266/pktbuf.c\
- libs/network/esp8266/ota.c
+ libs/network/esp8266/pktbuf.c
+
+ ifndef NO_FOTA
+   SOURCES += libs/network/esp8266/ota.c
+ else
+   DEFINES += -DNO_FOTA
+ endif
  endif
 
  ifdef USE_TELNET

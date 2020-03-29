@@ -21,6 +21,9 @@
 #include "jswrapper.h"
 #include "jsinteractive.h"
 #include "jstimer.h"
+#ifdef PUCKJS
+#include "jswrap_puck.h" // jswrap_puck_getTemperature
+#endif
 
 /*JSON{
   "type" : "class",
@@ -49,6 +52,26 @@ E.on('init', function() {
 rather than replacing the last one. This allows you to write modular code -
 something that was not possible with `onInit`.
  */
+/*JSON{
+  "type" : "event",
+  "class" : "E",
+  "name" : "kill"
+}
+This event is called just before the device shuts down for commands such as
+`reset()`, `load()`, `save()`, `E.reboot()` or `Bangle.off()`
+
+For example to write `"Bye!"` just before shutting down use:
+
+```
+E.on('kill', function() {
+  console.log("Bye!");
+});
+```
+
+**NOTE:** This event is not called when the device is 'hard reset' - for
+example by removing power, hitting an actual reset button, or via
+a Watchdog timer reset.
+*/
 
 /*JSON{
   "type" : "event",
@@ -74,15 +97,24 @@ so that you do get a callback each time a flag is set, call `E.getErrorFlags()`.
   "type" : "staticmethod",
   "class" : "E",
   "name" : "getTemperature",
-  "generate_full" : "jshReadTemperature()",
+  "generate" : "jswrap_espruino_getTemperature",
   "return" : ["float","The temperature in degrees C"]
 }
-Use the STM32's internal thermistor to work out the temperature.
+Use the microcontroller's internal thermistor to work out the temperature.
+
+On Puck.js v2.0 this will use the on-board PCT2075TP temperature sensor, but on other devices it may not be desperately well calibrated.
 
 While this is implemented on Espruino boards, it may not be implemented on other devices. If so it'll return NaN.
 
  **Note:** This is not entirely accurate and varies by a few degrees from chip to chip. It measures the **die temperature**, so when connected to USB it could be reading 10 over degrees C above ambient temperature. When running from battery with `setDeepSleep(true)` it is much more accurate though.
 */
+JsVarFloat jswrap_espruino_getTemperature() {
+#ifdef PUCKJS
+  return jswrap_puck_getTemperature();
+#else
+  return jshReadTemperature();
+#endif
+}
 
 /*JSON{
   "type" : "staticmethod",
@@ -1027,6 +1059,87 @@ int jswrap_espruino_setClock(JsVar *options) {
   "type" : "staticmethod",
   "ifndef" : "SAVE_ON_FLASH",
   "class" : "E",
+  "name" : "setConsole",
+  "generate" : "jswrap_espruino_setConsole",
+  "params" : [
+    ["device","JsVar",""],
+    ["options","JsVar","(optional) object of options, see below"]
+  ]
+}
+Changes the device that the JS console (otherwise known as the REPL)
+is attached to. If the console is on a device, that
+device can be used for programming Espruino.
+
+Rather than calling `Serial.setConsole` you can call
+`E.setConsole("DeviceName")`.
+
+This is particularly useful if you just want to
+remove the console. `E.setConsole(null)` will
+make the console completely inaccessible.
+
+`device` may be `"Serial1"`,`"USB"`,`"Bluetooth"`,`"Telnet"`,`"Terminal"`,
+any other *hardware* `Serial` device, or `null` to disable the console completely.
+
+`options` is of the form:
+
+```
+{
+  force : bool // default false, force the console onto this device so it does not move
+               //   if false, changes in connection state (eg USB/Bluetooth) can move
+               //   the console automatically.
+}
+```
+*/
+void jswrap_espruino_setConsole(JsVar *deviceVar, JsVar *options) {
+  bool force = false;
+  jsvConfigObject configs[] = {
+    {"force", JSV_BOOLEAN, &force}
+  };
+  if (!jsvReadConfigObject(options, configs, sizeof(configs) / sizeof(jsvConfigObject)))
+    return;
+
+  IOEventFlags device = EV_NONE;
+  if (jsvIsObject(deviceVar)) {
+    device = jsiGetDeviceFromClass(deviceVar);
+  } else if (jsvIsString(deviceVar)) {
+    char name[JSLEX_MAX_TOKEN_LENGTH];
+    jsvGetString(deviceVar, name, JSLEX_MAX_TOKEN_LENGTH);
+    device = jshFromDeviceString(name);
+  }
+
+  if (device==EV_NONE && !jsvIsNull(deviceVar)) {
+    jsExceptionHere(JSET_ERROR, "Unknown device type %q", device);
+    return;
+  }
+
+  if (device!=EV_NONE && !DEVICE_IS_SERIAL(device)) {
+    jsExceptionHere(JSET_ERROR, "setConsole can't be used on 'soft' or non-Serial devices");
+    return;
+  }
+  jsiSetConsoleDevice(device, force);
+}
+
+/*JSON{
+  "type" : "staticmethod",
+  "class" : "E",
+  "name" : "getConsole",
+  "generate" : "jswrap_espruino_getConsole",
+  "return" : ["JsVar","The current console device as a string, or just `null` if the console is null"]
+
+}
+Returns the current console device - see `E.setConsole` for more information.
+*/
+JsVar *jswrap_espruino_getConsole() {
+  IOEventFlags dev = jsiGetConsoleDevice();
+  if (dev == EV_NONE) return jsvNewNull();
+  return jsvNewFromString(jshGetDeviceString(dev));
+}
+
+
+/*JSON{
+  "type" : "staticmethod",
+  "ifndef" : "SAVE_ON_FLASH",
+  "class" : "E",
   "name" : "reverseByte",
   "generate" : "jswrap_espruino_reverseByte",
   "params" : [
@@ -1488,6 +1601,34 @@ signal.
   "type" : "staticmethod",
   "ifndef" : "SAVE_ON_FLASH",
   "class" : "E",
+  "name" : "CRC32",
+  "generate" : "jswrap_espruino_CRC32",
+  "params" : [
+    ["data","JsVar","Iterable data to perform CRC32 on (each element treated as a byte)"]
+  ],
+  "return" : ["JsVar","The CRC of the supplied data"]
+}
+Perform a standard 32 bit CRC (Cyclic redundancy check) on the supplied data (one byte at a time)
+and return the result as an unsigned integer.
+ */
+JsVar *jswrap_espruino_CRC32(JsVar *data) {
+  JsvIterator it;
+  jsvIteratorNew(&it, data, JSIF_EVERY_ARRAY_ELEMENT);
+  uint32_t crc = 0xFFFFFFFF;
+  while (jsvIteratorHasElement(&it)) {
+    crc ^= (uint8_t)jsvIteratorGetIntegerValue(&it);
+    for (int t=0;t<8;t++)
+      crc = (crc>>1) ^ (0xEDB88320 & -(crc & 1));
+    jsvIteratorNext(&it);
+  }
+  jsvIteratorFree(&it);
+  return jsvNewFromLongInteger(~crc);
+}
+
+/*JSON{
+  "type" : "staticmethod",
+  "ifndef" : "SAVE_ON_FLASH",
+  "class" : "E",
   "name" : "HSBtoRGB",
   "generate" : "jswrap_espruino_HSBtoRGB",
   "params" : [
@@ -1719,6 +1860,11 @@ reset of Espruino (resetting the interpreter and pin states, but not
 all the hardware)
 */
 void jswrap_espruino_reboot() {
+  // ensure `E.on('kill',...` gets called and everything is torn down correctly
+  jsiKill();
+  jsvKill();
+  jshKill();
+
   jshReboot();
 }
 

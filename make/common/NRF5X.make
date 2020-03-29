@@ -27,6 +27,7 @@ endif #DFU_UPDATE_BUILD
 
 # Just try and get rid of the compile warnings.
 CFLAGS += -Wno-sign-conversion -Wno-conversion -Wno-unused-parameter -fomit-frame-pointer #this is for device manager in nordic sdk
+CFLAGS+=-Wno-expansion-to-defined # remove warnings created by Nordic's libs
 DEFINES += -D$(BOARD) -D$(CHIP) -DNRF5X -DNRF5X_SDK_$(NRF5X_SDK)
 
 ARM = 1
@@ -282,8 +283,8 @@ else # NRF_BL_DFU_INSECURE
   TARGETSOURCES += $(NRF5X_SDK_PATH)/components/libraries/crypto/nrf_crypto.c
   TARGETSOURCES += $(NRF5X_SDK_PATH)/external/micro-ecc/uECC.c
   TARGETSOURCES += $(NRF5X_SDK_PATH)/components/libraries/sha256/sha256.c
-endif
-else
+endif # NRF_BL_DFU_INSECURE
+else # NRF5X_SDK_12
   DEFINES += -DAPP_TIMER_V2
   DEFINES += -DAPP_TIMER_V2_RTC1_ENABLED
   DEFINES += -DNRF_DFU_SETTINGS_VERSION=1

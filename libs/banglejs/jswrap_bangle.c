@@ -74,13 +74,15 @@ The Bangle.js's vibration motor.
   "params" : [["xyz","JsVar",""]],
   "ifdef" : "BANGLEJS"
 }
-Accelerometer data available with `{x,y,z,diff,mag}` object as a parameter
+Accelerometer data available with `{x,y,z,diff,mag}` object as a parameter.
 
 * `x` is X axis (left-right) in `g`
 * `y` is Y axis (up-down) in `g`
 * `z` is Z axis (in-out) in `g`
 * `diff` is difference between this and the last reading in `g`
 * `mag` is the magnitude of the acceleration in `g`
+
+You can also retrieve the most recent reading with `Bangle.getAccel()`.
  */
 /*JSON{
   "type" : "event",
@@ -99,6 +101,16 @@ Called whenever a step is detected by Bangle.js's pedometer.
   "ifdef" : "BANGLEJS"
 }
 Has the watch been moved so that it is face-up, or not face up?
+ */
+/*JSON{
+  "type" : "event",
+  "class" : "Bangle",
+  "name" : "twist",
+  "ifdef" : "BANGLEJS"
+}
+This event happens when the watch has been twisted around it's axis - for instance as if it was rotated so someone could look at the time.
+
+To tweak when this happens, see the `twist*` options in `Bangle.setOptions()`
  */
 /*JSON{
   "type" : "event",
@@ -124,6 +136,8 @@ Magnetometer/Compass data available with `{x,y,z,dx,dy,dz,heading}` object as a 
 
 To get this event you must turn the compass on
 with `Bangle.setCompassPower(1)`.
+
+You can also retrieve the most recent reading with `Bangle.getCompass()`.
  */
 /*JSON{
   "type" : "event",
@@ -152,7 +166,7 @@ GPS data, as an object. Contains:
   "alt": number,      // altitude in M
   "speed": number,    // Speed in kph
   "course": number,   // Course in degrees
-  "time": Date,       // Current Time
+  "time": Date,       // Current Time (or undefined if not known)
   "satellites": 7,    // Number of satellites
   "fix": 1            // NMEA Fix state - 0 is no fix
 }
@@ -296,6 +310,8 @@ volatile uint16_t flipTimer; // in ms
 volatile uint16_t btn1Timer; // in ms
 /// Is LCD power automatic? If true this is the number of ms for the timeout, if false it's 0
 int lcdPowerTimeout; // in ms
+/// If a button was pressed to wake the LCD up, which one was it?
+char lcdWakeButton;
 /// Is the LCD on?
 bool lcdPowerOn;
 /// LCD Brightness - 255=full
@@ -322,6 +338,8 @@ volatile uint8_t accGestureRecordedCount;
 volatile uint8_t accIdleCount;
 /// data on how watch was tapped
 unsigned char tapInfo;
+/// time since watch was last twisted enough past twistThreshold
+volatile uint16_t twistTimer; // in ms
 // Gesture settings
 /// how big a difference before we consider a gesture started?
 int accelGestureStartThresh = 800*800;
@@ -336,13 +354,28 @@ int accelGestureMinLength = 10;
 int stepCounterThresholdLow = (8192-80)*(8192-80);
 /// How high must acceleration magnitude squared get before we consider it a step?
 int stepCounterThresholdHigh = (8192+80)*(8192+80);
+/// How much acceleration to register a twist of the watch strap?
+int twistThreshold = 800;
+/// Maximum acceleration in Y to trigger a twist (low Y means watch is facing the right way up)
+int twistMaxY = -800;
+/// How little time (in ms) must a twist take from low->high acceleration?
+int twistTimeout = 1000;
+
 /// Current steps since reset
 uint32_t stepCounter;
 /// has acceleration counter passed stepCounterThresholdLow?
 bool stepWasLow;
 /// What state was the touchscreen last in
-uint8_t touchLastState;
-uint8_t touchLastState2;
+typedef enum {
+  TS_NONE = 0,
+  TS_LEFT = 1,
+  TS_RIGHT = 2,
+  TS_BOTH = 3,
+  TS_SWIPED = 4
+} TouchState;
+TouchState touchLastState; /// What happened in the last event?
+TouchState touchLastState2; /// What happened in the event before last?
+TouchState touchStatus; ///< What has happened *while the current touch is in progress*
 
 int8_t hrmHistory[HRM_HISTORY_LEN];
 volatile uint8_t hrmHistoryIdx;
@@ -351,6 +384,21 @@ volatile uint8_t hrmHistoryIdx;
 JsVar *promiseBeep;
 /// Promise when buzz is finished
 JsVar *promiseBuzz;
+
+typedef enum {
+  JSBF_NONE,
+  JSBF_WAKEON_FACEUP = 1,
+  JSBF_WAKEON_BTN1   = 2,
+  JSBF_WAKEON_BTN2   = 4,
+  JSBF_WAKEON_BTN3   = 8,
+  JSBF_WAKEON_TOUCH  = 16,
+  JSBF_WAKEON_TWIST  = 32,
+
+  JSBF_DEFAULT =
+      JSBF_WAKEON_TWIST|
+      JSBF_WAKEON_BTN1|JSBF_WAKEON_BTN2|JSBF_WAKEON_BTN3
+} JsBangleFlags;
+volatile JsBangleFlags bangleFlags;
 
 typedef enum {
   JSBT_NONE,
@@ -372,6 +420,7 @@ typedef enum {
   JSBT_TOUCH_RIGHT = 16384, ///< touch rhs of touchscreen
   JSBT_TOUCH_MASK = JSBT_TOUCH_LEFT | JSBT_TOUCH_RIGHT,
   JSBT_HRM_DATA = 32768, ///< Heart rate data is ready for analysis
+  JSBT_TWIST_EVENT = 65536, ///< Watch was twisted
 } JsBangleTasks;
 JsBangleTasks bangleTasks;
 
@@ -504,6 +553,26 @@ void peripheralPollHandler() {
       stepCounter++;
       bangleTasks |= JSBT_STEP_EVENT;
     }
+    // check for twist action
+    if (twistTimer < TIMER_MAX)
+      twistTimer += pollInterval;
+    int tdy = dy;
+    int tthresh = twistThreshold;
+    if (tthresh<0) {
+      tthresh = -tthresh;
+      tdy = -tdy;
+    }
+    if (tdy>tthresh) twistTimer=0;
+    if (tdy<-tthresh && twistTimer<twistTimeout && acc.y<twistMaxY) {
+      twistTimer = TIMER_MAX; // ensure we don't trigger again until tdy>tthresh
+      bangleTasks |= JSBT_TWIST_EVENT;
+      if (bangleFlags&JSBF_WAKEON_TWIST) {
+        flipTimer = 0;
+        if (!lcdPowerOn)
+          bangleTasks |= JSBT_LCD_ON;
+      }
+    }
+
     // checking for gestures
     if (accGestureCount==0) { // no gesture yet
       // if movement is eniugh, start one
@@ -577,42 +646,68 @@ void backlightOffHandler() {
 void btnHandlerCommon(int button, bool state, IOEventFlags flags) {
   // wake up
   if (lcdPowerTimeout) {
-    if (button<=3) {
+    if (((bangleFlags&JSBF_WAKEON_BTN1)&&(button==1)) ||
+        ((bangleFlags&JSBF_WAKEON_BTN2)&&(button==2)) ||
+        ((bangleFlags&JSBF_WAKEON_BTN3)&&(button==3))){
       // if a 'hard' button, turn LCD on
       flipTimer = 0;
-      if (!lcdPowerOn) {
+      if (!lcdPowerOn && state) {
         bangleTasks |= JSBT_LCD_ON;
+        lcdWakeButton = button;
         return; // don't push button event if the LCD is off
       }
     } else {
       // on touchscreen, keep LCD on if it was in previously
       if (lcdPowerOn)
         flipTimer = 0;
+      else // else don't push the event
+        return;
     }
+  }
+  /* This stops the button 'up' event being
+   propagated if the button down was used to wake
+   the LCD up */
+  if (button == lcdWakeButton && !state) {
+    lcdWakeButton = 0;
+    return;
   }
   // Add to the event queue for normal processing for watches
   jshPushIOEvent(flags | (state?EV_EXTI_IS_HIGH:0), jshGetSystemTime());
 }
 
-void btnTouchHandler() {
-  uint8_t state =
-      (jshPinGetValue(BTN4_PININDEX)?1:0) |
-      (jshPinGetValue(BTN5_PININDEX)?2:0);
-
-  if (!touchLastState2 &&
-      touchLastState &&
-      !state) {
-    if (touchLastState==1) bangleTasks |= JSBT_TOUCH_LEFT;
-    if (touchLastState==2) bangleTasks |= JSBT_TOUCH_RIGHT;
+// returns true if handled and shouldn't create a normal watch event
+bool btnTouchHandler() {
+  if (bangleFlags&JSBF_WAKEON_TOUCH) {
+    flipTimer = 0; // ensure LCD doesn't sleep if we're touching it
+    if (!lcdPowerOn) {
+      bangleTasks |= JSBT_LCD_ON;
+      return true; // eat the event
+    }
   }
-  if ((touchLastState==3 && state==1) ||
-      (touchLastState==2 && state==1))
+  TouchState state =
+      (jshPinGetValue(BTN4_PININDEX)?TS_LEFT:0) |
+      (jshPinGetValue(BTN5_PININDEX)?TS_RIGHT:0);
+  touchStatus |= state;
+  if ((touchLastState2==TS_RIGHT && touchLastState==TS_BOTH && state==TS_LEFT) ||
+      (touchLastState==TS_RIGHT && state==1)) {
+    touchStatus |= TS_SWIPED;
     bangleTasks |= JSBT_SWIPE_LEFT;
-  if ((touchLastState==3 && state==2) ||
-      (touchLastState==1 && state==2))
+  }
+  if ((touchLastState2==TS_LEFT && touchLastState==TS_BOTH && state==TS_RIGHT) ||
+      (touchLastState==TS_LEFT && state==TS_RIGHT)) {
+    touchStatus |= TS_SWIPED;
     bangleTasks |= JSBT_SWIPE_RIGHT;
+  }
+  if (!state) {
+    if (touchLastState && !(touchStatus&TS_SWIPED)) {
+      if (touchStatus&TS_LEFT) bangleTasks |= JSBT_TOUCH_LEFT;
+      if (touchStatus&TS_RIGHT) bangleTasks |= JSBT_TOUCH_RIGHT;
+    }
+    touchStatus = TS_NONE;
+  }
   touchLastState2 = touchLastState;
   touchLastState = state;
+  return false;
 }
 void btn1Handler(bool state, IOEventFlags flags) {
   btnHandlerCommon(1,state,flags);
@@ -624,11 +719,11 @@ void btn3Handler(bool state, IOEventFlags flags) {
   btnHandlerCommon(3,state,flags);
 }
 void btn4Handler(bool state, IOEventFlags flags) {
-  btnTouchHandler();
+  if (btnTouchHandler()) return;
   btnHandlerCommon(4,state,flags);
 }
 void btn5Handler(bool state, IOEventFlags flags) {
-  btnTouchHandler();
+  if (btnTouchHandler()) return;
   btnHandlerCommon(5,state,flags);
 }
 
@@ -674,9 +769,9 @@ void jswrap_banglejs_setLCDPower(bool isOn) {
   if (isOn) { // wake
     lcdST7789_cmd(0x11, 0, NULL); // SLPOUT
     jshDelayMicroseconds(20);
-    lcdST7789_cmd(0x29, 0, NULL);
+    lcdST7789_cmd(0x29, 0, NULL); // DISPON
   } else { // sleep
-    lcdST7789_cmd(0x28, 0, NULL);
+    lcdST7789_cmd(0x28, 0, NULL); // DISPOFF
     jshDelayMicroseconds(20);
     lcdST7789_cmd(0x10, 0, NULL); // SLPIN
   }
@@ -767,10 +862,12 @@ void jswrap_banglejs_setLCDMode(JsVar *mode) {
 
   JsVar *graphics = jsvObjectGetChild(execInfo.hiddenRoot, JS_GRAPHICS_VAR, 0);
   if (!graphics) return;
+  jswrap_graphics_setFont(graphics, NULL, 1); // reset fonts - this will free any memory associated with a custom font
   JsGraphics gfx;
   if (!graphicsGetFromVar(&gfx, graphics)) return;
   // remove the buffer if it was defined
   jsvObjectSetOrRemoveChild(gfx.graphicsVar, "buffer", 0);
+  unsigned int bufferSize = 0;
   switch (lcdMode) {
     case LCDST7789_MODE_NULL:
     case LCDST7789_MODE_UNBUFFERED:
@@ -787,14 +884,27 @@ void jswrap_banglejs_setLCDMode(JsVar *mode) {
       gfx.data.width = 120;
       gfx.data.height = 120;
       gfx.data.bpp = 8;
-      jsvObjectSetChildAndUnLock(gfx.graphicsVar, "buffer", jswrap_arraybuffer_constructor(120*120));
+      bufferSize = 120*120;
       break;
     case LCDST7789_MODE_BUFFER_80x80:
       gfx.data.width = 80;
       gfx.data.height = 80;
       gfx.data.bpp = 8;
-      jsvObjectSetChildAndUnLock(gfx.graphicsVar, "buffer", jswrap_arraybuffer_constructor(80*80));
+      bufferSize = 80*80;
       break;
+  }
+  if (bufferSize) {
+    jsvGarbageCollect();
+    jsvDefragment();
+    JsVar *arrData = jsvNewFlatStringOfLength(bufferSize);
+    if (arrData) {
+      jsvObjectSetChildAndUnLock(gfx.graphicsVar, "buffer", jsvNewArrayBufferFromString(arrData, (unsigned int)bufferSize));
+    } else {
+      jsExceptionHere(JSET_ERROR, "Not enough memory to allocate offscreen buffer");
+      jswrap_banglejs_setLCDMode(0); // go back to default mode
+      return;
+    }
+    jsvUnLock(arrData);
   }
   graphicsStructResetState(&gfx); // reset colour, cliprect, etc
   graphicsSetVar(&gfx);
@@ -913,23 +1023,59 @@ void jswrap_banglejs_setPollInterval(JsVarFloat interval) {
 }
 Set internal options used for gestures, step counting, etc...
 
-* `gestureStartThresh`  how big a difference before we consider a gesture started? default = `sqr(800)`
+* `wakeOnBTN1` should the LCD turn on when BTN1 is pressed? default = `true`
+* `wakeOnBTN2` should the LCD turn on when BTN2 is pressed? default = `true`
+* `wakeOnBTN3` should the LCD turn on when BTN3 is pressed? default = `true`
+* `wakeOnFaceUp` should the LCD turn on when the watch is turned face up? default = `false`
+* `wakeOnTouch` should the LCD turn on when the touchscreen is pressed? default = `false`
+* `wakeOnTwist` should the LCD turn on when the watch is twisted? default = `true`
+* `twistThreshold`  How much acceleration to register a twist of the watch strap? Can be negative for oppsite direction. default = `800`
+* `twistMaxY` Maximum acceleration in Y to trigger a twist (low Y means watch is facing the right way up). default = `-800`
+* `twistTimeout`  How little time (in ms) must a twist take from low->high acceleration? default = `1000`
+
+* `gestureStartThresh` how big a difference before we consider a gesture started? default = `sqr(800)`
 * `gestureEndThresh` how small a difference before we consider a gesture ended? default = `sqr(2000)`
 * `gestureInactiveCount` how many samples do we keep after a gesture has ended? default = `4`
 * `gestureMinLength` how many samples must a gesture have before we notify about it? default = `10`
+*
 * `stepCounterThresholdLow` How low must acceleration magnitude squared get before we consider the next rise a step? default = `sqr(8192-80)`
 * `stepCounterThresholdHigh` How high must acceleration magnitude squared get before we consider it a step? default = `sqr(8192+80)`
+
+Where accelerations are used they are in internal units, where `8192 = 1g`
+
 */
 void jswrap_banglejs_setOptions(JsVar *options) {
+  bool wakeOnBTN1 = bangleFlags&JSBF_WAKEON_BTN1;
+  bool wakeOnBTN2 = bangleFlags&JSBF_WAKEON_BTN2;
+  bool wakeOnBTN3 = bangleFlags&JSBF_WAKEON_BTN3;
+  bool wakeOnFaceUp = bangleFlags&JSBF_WAKEON_FACEUP;
+  bool wakeOnTouch = bangleFlags&JSBF_WAKEON_TOUCH;
+  bool wakeOnTwist = bangleFlags&JSBF_WAKEON_TWIST;
   jsvConfigObject configs[] = {
       {"gestureStartThresh", JSV_INTEGER, &accelGestureStartThresh},
       {"gestureEndThresh", JSV_INTEGER, &accelGestureEndThresh},
       {"gestureInactiveCount", JSV_INTEGER, &accelGestureInactiveCount},
       {"gestureMinLength", JSV_INTEGER, &accelGestureMinLength},
       {"stepCounterThresholdLow", JSV_INTEGER, &stepCounterThresholdLow},
-      {"stepCounterThresholdHigh", JSV_INTEGER, &stepCounterThresholdHigh}
+      {"stepCounterThresholdHigh", JSV_INTEGER, &stepCounterThresholdHigh},
+      {"twistThreshold", JSV_INTEGER, &twistThreshold},
+      {"twistTimeout", JSV_INTEGER, &twistTimeout},
+      {"twistMaxY", JSV_INTEGER, &twistMaxY},
+      {"wakeOnBTN1", JSV_BOOLEAN, &wakeOnBTN1},
+      {"wakeOnBTN2", JSV_BOOLEAN, &wakeOnBTN2},
+      {"wakeOnBTN3", JSV_BOOLEAN, &wakeOnBTN3},
+      {"wakeOnFaceUp", JSV_BOOLEAN, &wakeOnFaceUp},
+      {"wakeOnTouch", JSV_BOOLEAN, &wakeOnTouch},
+      {"wakeOnTwist", JSV_BOOLEAN, &wakeOnTwist},
   };
-  jsvReadConfigObject(options, configs, sizeof(configs) / sizeof(jsvConfigObject));
+  if (jsvReadConfigObject(options, configs, sizeof(configs) / sizeof(jsvConfigObject))) {
+    bangleFlags = (bangleFlags&~JSBF_WAKEON_BTN1) | (wakeOnBTN1?JSBF_WAKEON_BTN1:0);
+    bangleFlags = (bangleFlags&~JSBF_WAKEON_BTN2) | (wakeOnBTN2?JSBF_WAKEON_BTN2:0);
+    bangleFlags = (bangleFlags&~JSBF_WAKEON_BTN3) | (wakeOnBTN3?JSBF_WAKEON_BTN3:0);
+    bangleFlags = (bangleFlags&~JSBF_WAKEON_FACEUP) | (wakeOnFaceUp?JSBF_WAKEON_FACEUP:0);
+    bangleFlags = (bangleFlags&~JSBF_WAKEON_TOUCH) | (wakeOnTouch?JSBF_WAKEON_TOUCH:0);
+    bangleFlags = (bangleFlags&~JSBF_WAKEON_TWIST) | (wakeOnTwist?JSBF_WAKEON_TWIST:0);
+  }
 }
 
 /*JSON{
@@ -1058,6 +1204,7 @@ void jswrap_banglejs_setGPSPower(bool isOn) {
     jshUSARTSetup(GPS_UART, &inf);
     jswrap_banglejs_ioWr(IOEXP_GPS, 1); // GPS on
     nmeaCount = 0;
+    memset(&gpsFix,0,sizeof(gpsFix));
   } else {
     jswrap_banglejs_ioWr(IOEXP_GPS, 0); // GPS off
     // setting pins to pullup will cause jshardware.c to disable the UART, saving power
@@ -1102,6 +1249,76 @@ void jswrap_banglejs_setCompassPower(bool isOn) {
   magmax.z = 0;
 }
 
+/*JSON{
+    "type" : "staticmethod",
+    "class" : "Bangle",
+    "name" : "getCompass",
+    "generate" : "jswrap_banglejs_getCompass",
+    "return" : ["JsVar","An object containing magnetometer readings (as below)"],
+    "ifdef" : "BANGLEJS"
+}
+Get the most recent Magnetometer/Compass reading. Data is in the same format as the `Bangle.on('mag',` event.
+
+Returns an `{x,y,z,dx,dy,dz,heading}` object
+
+* `x/y/z` raw x,y,z magnetometer readings
+* `dx/dy/dz` readings based on calibration since magnetometer turned on
+* `heading` in degrees based on calibrated readings (will be NaN if magnetometer hasn't been rotated around 360 degrees)
+
+To get this event you must turn the compass on
+with `Bangle.setCompassPower(1)`.*/
+JsVar *jswrap_banglejs_getCompass() {
+  JsVar *o = jsvNewObject();
+  if (o) {
+    jsvObjectSetChildAndUnLock(o, "x", jsvNewFromInteger(mag.x));
+    jsvObjectSetChildAndUnLock(o, "y", jsvNewFromInteger(mag.y));
+    jsvObjectSetChildAndUnLock(o, "z", jsvNewFromInteger(mag.z));
+    int dx = mag.x - ((magmin.x+magmax.x)/2);
+    int dy = mag.y - ((magmin.y+magmax.y)/2);
+    int dz = mag.z - ((magmin.z+magmax.z)/2);
+    jsvObjectSetChildAndUnLock(o, "dx", jsvNewFromInteger(dx));
+    jsvObjectSetChildAndUnLock(o, "dy", jsvNewFromInteger(dy));
+    jsvObjectSetChildAndUnLock(o, "dz", jsvNewFromInteger(dz));
+    int cx = magmax.x-magmin.x;
+    int cy = magmax.y-magmin.y;
+    int c = cx*cx+cy*cy;
+    double h = NAN;
+    if (c>3000) { // only give a heading if we think we have valid data (eg enough magnetic field difference in min/max
+      h = jswrap_math_atan2(dx,dy)*180/PI;
+      if (h<0) h+=360;
+    }
+    jsvObjectSetChildAndUnLock(o, "heading", jsvNewFromFloat(h));
+  }
+  return o;
+}
+
+/*JSON{
+    "type" : "staticmethod",
+    "class" : "Bangle",
+    "name" : "getAccel",
+    "generate" : "jswrap_banglejs_getAccel",
+    "return" : ["JsVar","An object containing accelerometer readings (as below)"],
+    "ifdef" : "BANGLEJS"
+}
+Get the most recent accelerometer reading. Data is in the same format as the `Bangle.on('accel',` event.
+
+* `x` is X axis (left-right) in `g`
+* `y` is Y axis (up-down) in `g`
+* `z` is Z axis (in-out) in `g`
+* `diff` is difference between this and the last reading in `g`
+* `mag` is the magnitude of the acceleration in `g`
+*/
+JsVar *jswrap_banglejs_getAccel() {
+  JsVar *o = jsvNewObject();
+  if (o) {
+    jsvObjectSetChildAndUnLock(o, "x", jsvNewFromFloat(acc.x/8192.0));
+    jsvObjectSetChildAndUnLock(o, "y", jsvNewFromFloat(acc.y/8192.0));
+    jsvObjectSetChildAndUnLock(o, "z", jsvNewFromFloat(acc.z/8192.0));
+    jsvObjectSetChildAndUnLock(o, "mag", jsvNewFromFloat(sqrt(accMagSquared)/8192.0));
+    jsvObjectSetChildAndUnLock(o, "diff", jsvNewFromFloat(sqrt(accdiff)/8192.0));
+  }
+  return o;
+}
 
 /*JSON{
   "type" : "init",
@@ -1143,9 +1360,12 @@ void jswrap_banglejs_init() {
   jswrap_banglejs_ioWr(IOEXP_LCD_BACKLIGHT,0); // backlight on
   jshDelayMicroseconds(10000);
 #endif
+  bangleFlags = JSBF_DEFAULT;
+  flipTimer = 0; // reset the LCD timeout timer
   lcdPowerOn = true;
   lcdBrightness = 255;
   lcdPowerTimeout = DEFAULT_LCD_POWER_TIMEOUT;
+  lcdWakeButton = 0;
   // Create backing graphics for LCD
   JsVar *graphics = jspNewObject(0, "Graphics");
   if (!graphics) return; // low memory
@@ -1201,7 +1421,7 @@ void jswrap_banglejs_init() {
   jsvUnLock(graphics);
 
 #ifndef EMSCRIPTEN
-  // accelerometer init
+  // KX023-1025 accelerometer init
   jswrap_banglejs_accelWr(0x18,0x0a); // CNTL1 Off (top bit)
   jswrap_banglejs_accelWr(0x19,0x80); // CNTL2 Software reset
   jshDelayMicroseconds(2000);
@@ -1240,6 +1460,7 @@ void jswrap_banglejs_init() {
   // Other IO
   jshPinSetState(BAT_PIN_CHARGING, JSHPINSTATE_GPIO_IN_PULLUP);
   // touch
+  touchStatus = TS_NONE;
   touchLastState = 0;
   touchLastState2 = 0;
 
@@ -1251,8 +1472,9 @@ void jswrap_banglejs_init() {
     for (unsigned int i=0;i<sizeof(buf);i++)
       if (buf[i]) allZero=false;
     if (allZero) {
-      jsiConsolePrintf("Erasing Storage Area\n");
+      jsiConsolePrintf("Erasing Storage Area...\n");
       jsfEraseAll();
+      jsiConsolePrintf("Erase complete.\n");
     }
   }
 #endif
@@ -1302,6 +1524,7 @@ void jswrap_banglejs_kill() {
   promiseBeep = 0;
   jsvUnLock(promiseBuzz);
   promiseBuzz = 0;
+
   jshSetPinShouldStayWatched(BTN1_PININDEX,false);
   jshSetPinShouldStayWatched(BTN2_PININDEX,false);
   jshSetPinShouldStayWatched(BTN3_PININDEX,false);
@@ -1329,13 +1552,8 @@ bool jswrap_banglejs_idle() {
   if (bangleTasks & JSBT_LCD_ON) jswrap_banglejs_setLCDPower(1);
   if (bangleTasks & JSBT_ACCEL_DATA) {
     if (bangle && jsiObjectHasCallbacks(bangle, JS_EVENT_PREFIX"accel")) {
-      JsVar *o = jsvNewObject();
+      JsVar *o = jswrap_banglejs_getAccel();
       if (o) {
-        jsvObjectSetChildAndUnLock(o, "x", jsvNewFromFloat(acc.x/8192.0));
-        jsvObjectSetChildAndUnLock(o, "y", jsvNewFromFloat(acc.y/8192.0));
-        jsvObjectSetChildAndUnLock(o, "z", jsvNewFromFloat(acc.z/8192.0));
-        jsvObjectSetChildAndUnLock(o, "mag", jsvNewFromFloat(sqrt(accMagSquared)/8192.0));
-        jsvObjectSetChildAndUnLock(o, "diff", jsvNewFromFloat(sqrt(accdiff)/8192.0));
         jsiQueueObjectCallbacks(bangle, JS_EVENT_PREFIX"accel", &o, 1);
         jsvUnLock(o);
       }
@@ -1352,7 +1570,7 @@ bool jswrap_banglejs_idle() {
         jsiQueueObjectCallbacks(bangle, JS_EVENT_PREFIX"faceUp", &v, 1);
         jsvUnLock(v);
       }
-      if (faceUp && lcdPowerTimeout && !lcdPowerOn) {
+      if (faceUp && lcdPowerTimeout && !lcdPowerOn && (bangleFlags&JSBF_WAKEON_FACEUP)) {
         // LCD was turned off, turn it back on
         jswrap_banglejs_setLCDPower(1);
         flipTimer = 0;
@@ -1395,26 +1613,8 @@ bool jswrap_banglejs_idle() {
   }
   if (bangle && (bangleTasks & JSBT_MAG_DATA)) {
     if (bangle && jsiObjectHasCallbacks(bangle, JS_EVENT_PREFIX"mag")) {
-      JsVar *o = jsvNewObject();
+      JsVar *o = jswrap_banglejs_getCompass();
       if (o) {
-        jsvObjectSetChildAndUnLock(o, "x", jsvNewFromInteger(mag.x));
-        jsvObjectSetChildAndUnLock(o, "y", jsvNewFromInteger(mag.y));
-        jsvObjectSetChildAndUnLock(o, "z", jsvNewFromInteger(mag.z));
-        int dx = mag.x - ((magmin.x+magmax.x)/2);
-        int dy = mag.y - ((magmin.y+magmax.y)/2);
-        int dz = mag.z - ((magmin.z+magmax.z)/2);
-        jsvObjectSetChildAndUnLock(o, "dx", jsvNewFromInteger(dx));
-        jsvObjectSetChildAndUnLock(o, "dy", jsvNewFromInteger(dy));
-        jsvObjectSetChildAndUnLock(o, "dz", jsvNewFromInteger(dz));
-        int cx = magmax.x-magmin.x;
-        int cy = magmax.y-magmin.y;
-        int c = cx*cx+cy*cy;
-        double h = NAN;
-        if (c>3000) { // only give a heading if we think we have valid data (eg enough magnetic field difference in min/max
-          h = jswrap_math_atan2(dx,dy)*180/PI;
-          if (h<0) h+=360;
-        }
-        jsvObjectSetChildAndUnLock(o, "heading", jsvNewFromFloat(h));
         jsiQueueObjectCallbacks(bangle, JS_EVENT_PREFIX"mag", &o, 1);
         jsvUnLock(o);
       }
@@ -1425,7 +1625,7 @@ bool jswrap_banglejs_idle() {
     if (o) {
       const int BPM_MIN = 40;
       const int BPM_MAX = 200;
-      const int SAMPLES_PER_SEC = 1000 / HRM_POLL_INTERVAL;
+      //const int SAMPLES_PER_SEC = 1000 / HRM_POLL_INTERVAL;
       const int CMIN = 60000 / (BPM_MAX*HRM_POLL_INTERVAL);
       const int CMAX = 60000 / (BPM_MIN*HRM_POLL_INTERVAL);
       assert(CMAX<HRM_HISTORY_LEN);
@@ -1464,7 +1664,7 @@ bool jswrap_banglejs_idle() {
 
       jsvObjectSetChildAndUnLock(o,"bpm",jsvNewFromInteger(60000 / (minIdx*HRM_POLL_INTERVAL)));
       jsvObjectSetChildAndUnLock(o,"confidence",jsvNewFromInteger(confidence));
-      JsVar *s = jsvNewNativeString(hrmHistory, sizeof(hrmHistory));
+      JsVar *s = jsvNewNativeString((char*)hrmHistory, sizeof(hrmHistory));
       JsVar *ab = jsvNewArrayBufferFromString(s,0);
       jsvObjectSetChildAndUnLock(o,"raw",jswrap_typedarray_constructor(ARRAYBUFFERVIEW_INT8,ab,0,0));
       jsvUnLock2(ab,s);
@@ -1501,7 +1701,7 @@ bool jswrap_banglejs_idle() {
     }
 #ifdef USE_TENSORFLOW
     if (bangle && jsiObjectHasCallbacks(bangle, JS_EVENT_PREFIX"aiGesture")) {
-      //JsVar *model = jsfReadFile(jsfNameFromString(".tfmodel"));
+      //JsVar *model = jsfReadFile(jsfNameFromString(".tfmodel"),0,0);
       JsfFileHeader header;
       uint32_t modelAddr = jsfFindFile(jsfNameFromString(".tfmodel"), &header);
 
@@ -1570,13 +1770,17 @@ bool jswrap_banglejs_idle() {
     jsiQueueObjectCallbacks(bangle, JS_EVENT_PREFIX"step", &steps, 1);
     jsvUnLock(steps);
   }
+  if (bangle && (bangleTasks & JSBT_TWIST_EVENT)) {
+    jsiQueueObjectCallbacks(bangle, JS_EVENT_PREFIX"twist", NULL, 0);
+  }
   if (bangle && (bangleTasks & JSBT_SWIPE_MASK)) {
     JsVar *o = jsvNewFromInteger((bangleTasks & JSBT_SWIPE_LEFT)?-1:1);
     jsiQueueObjectCallbacks(bangle, JS_EVENT_PREFIX"swipe", &o, 1);
     jsvUnLock(o);
   }
   if (bangle && (bangleTasks & JSBT_TOUCH_MASK)) {
-    JsVar *o = jsvNewFromInteger((bangleTasks & JSBT_TOUCH_LEFT)?1:2);
+    JsVar *o = jsvNewFromInteger(((bangleTasks & JSBT_TOUCH_LEFT)?1:0) |
+                                 ((bangleTasks & JSBT_TOUCH_RIGHT)?2:0));
     jsiQueueObjectCallbacks(bangle, JS_EVENT_PREFIX"touch", &o, 1);
     jsvUnLock(o);
   }
@@ -1688,6 +1892,7 @@ int jswrap_banglejs_accelRd(JsVarInt reg) {
   return 0;
 #endif
 }
+
 
 /*JSON{
     "type" : "staticmethod",
@@ -1867,9 +2072,12 @@ void jswrap_banglejs_off() {
   jsvKill();
   jshKill();
 
+  jswrap_banglejs_ioWr(IOEXP_HRM,1); // HRM off
   jswrap_banglejs_ioWr(IOEXP_GPS, 0); // GPS off
   jshPinOutput(VIBRATE_PIN,0); // vibrate off
   jswrap_banglejs_setLCDPower(0);
+  jswrap_banglejs_accelWr(0x18,0x0a); // accelerometer off
+  jswrap_banglejs_compassWr(0x31,0); // compass off
 
   nrf_gpio_cfg_sense_set(BTN2_PININDEX, NRF_GPIO_PIN_NOSENSE);
   nrf_gpio_cfg_sense_set(BTN3_PININDEX, NRF_GPIO_PIN_NOSENSE);
@@ -1885,9 +2093,6 @@ void jswrap_banglejs_off() {
     "class" : "Bangle",
     "name" : "getLogo",
     "generate" : "jswrap_banglejs_getLogo",
-    "params" : [
-      ["menu","JsVar","Get the Bangle.js logo as an image that can be used with `g.drawImage`"]
-    ],
     "return" : ["JsVar", "An image to be used with `g.drawImage` - 222 x 104 x 2 bits" ],
     "ifdef" : "BANGLEJS"
 }
@@ -1986,7 +2191,7 @@ JsVar *jswrap_banglejs_getLogo() {
           247, 227, 97, 62, 3, 107, 224, 102, 225, 70, 215, 192, 35, 227, 97,
           58, 0, 177, 0
  };
-  JsVar *v = jsvNewNativeString(&img_compressed[0], sizeof(img_compressed));
+  JsVar *v = jsvNewNativeString((char*)&img_compressed[0], sizeof(img_compressed));
   JsVar *img = jswrap_heatshrink_decompress(v);
   jsvUnLock(v);
   return img;
@@ -1995,17 +2200,38 @@ JsVar *jswrap_banglejs_getLogo() {
 /*JSON{
     "type" : "staticmethod",
     "class" : "Bangle",
-    "name" : "menu",
-    "generate" : "gen_jswrap_E_showMenu",
-    "params" : [
-      ["menu","JsVar","An object containing name->function mappings to to be used in a menu"]
-    ],
-    "return" : ["JsVar", "A menu object with `draw`, `move` and `select` functions" ],
+    "name" : "loadWidgets",
+    "generate_js" : "libs/js/banglejs/Bangle_loadWidgets.min.js",
     "ifdef" : "BANGLEJS"
 }
-Display a menu on the screen, and set up the buttons to navigate through it.
+Load all widgets from flash Storage. Call this once at the beginning
+of your application if you want any on-screen widgets to be loaded.
 
-DEPRECATED: Use `E.showMenu`
+They will be loaded into a global `WIDGETS` array, and
+can be rendered with `Bangle.drawWidgets`.
+*/
+/*JSON{
+    "type" : "staticmethod",
+    "class" : "Bangle",
+    "name" : "drawWidgets",
+    "generate_js" : "libs/js/banglejs/Bangle_drawWidgets.min.js",
+    "ifdef" : "BANGLEJS"
+}
+Draw any onscreen widgets that were loaded with `Bangle.loadWidgets()`.
+
+Widgets should redraw themselves when something changes - you'll only
+need to call drawWidgets if you decide to clear the entire screen
+with `g.clear()`.
+*/
+/*JSON{
+    "type" : "staticmethod",
+    "class" : "Bangle",
+    "name" : "showLauncher",
+    "generate_js" : "libs/js/banglejs/Bangle_showLauncher.min.js",
+    "ifdef" : "BANGLEJS"
+}
+Load the Bangle.js app launcher, which will allow the user
+to select an application to launch.
 */
 
 /*JSON{
