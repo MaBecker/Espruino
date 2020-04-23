@@ -472,6 +472,16 @@ void jsiSoftInit(bool hasBeenReset) {
   // Run wrapper initialisation stuff
   jswInit();
 
+  // Search for invalid storage and remove it
+#ifndef EMSCRIPTEN
+  if (!jsfIsStorageValid()) {
+    jsiConsolePrintf("Storage is corrupt.\n");
+    jsiConsolePrintf("Erasing Storage Area...\n");
+    jsfEraseAll();
+    jsiConsolePrintf("Erase complete.\n");
+  }
+#endif
+
   // Run 'boot code' - textual JS in flash
   jsfLoadBootCodeFromFlash(hasBeenReset);
 

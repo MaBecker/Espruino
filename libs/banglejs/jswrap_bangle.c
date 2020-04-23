@@ -1241,12 +1241,12 @@ void jswrap_banglejs_setCompassPower(bool isOn) {
   mag.x = 0;
   mag.y = 0;
   mag.z = 0;
-  magmin.x = 0;
-  magmin.y = 0;
-  magmin.z = 0;
-  magmax.x = 0;
-  magmax.y = 0;
-  magmax.z = 0;
+  magmin.x = 32767;
+  magmin.y = 32767;
+  magmin.z = 32767;
+  magmax.x = -32768;
+  magmax.y = -32768;
+  magmax.z = -32768;
 }
 
 /*JSON{
@@ -1463,21 +1463,6 @@ void jswrap_banglejs_init() {
   touchStatus = TS_NONE;
   touchLastState = 0;
   touchLastState2 = 0;
-
-#ifndef EMSCRIPTEN
-  { // Flash memory - on first boot we might need to erase it
-    char buf[sizeof(JsfFileHeader)];
-    jshFlashRead(buf, FLASH_SAVED_CODE_START, sizeof(buf));
-    bool allZero = true;
-    for (unsigned int i=0;i<sizeof(buf);i++)
-      if (buf[i]) allZero=false;
-    if (allZero) {
-      jsiConsolePrintf("Erasing Storage Area...\n");
-      jsfEraseAll();
-      jsiConsolePrintf("Erase complete.\n");
-    }
-  }
-#endif
 
 #ifndef EMSCRIPTEN
   // Add watchdog timer to ensure watch always stays usable (hopefully!)
