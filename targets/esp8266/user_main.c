@@ -350,11 +350,32 @@ uint32 user_rf_cal_sector_set(void) {
   return rf_cal_sec;
 }
 
+#ifdef ESPR_EXCEPTION_HANDLER
+xtos_handler_arg_t unaligned_handler(xtos_handler_arg_t arg) {
+  XtExcFrame* frame = (XtExcFrame*)arg;
+  uint32_t cause;
+  asm volatile ("rsr %0, EXCCAUSE" : "=r"(cause));
+
+  if (frame->pc & 1) {
+    frame->pc += 2; // Jump past the 16-bit compressed instruction
+  } else {
+    frame->pc += 3; // Jump past a standard 24-bit instruction
+  } 
+  //jsiConsolePrintf("EXCCAUSE=%d PC=0x%08x A0=0x%08x\n", cause, frame->pc, frame->a[0]);
+  jsExceptionHere(JSET_ERROR, "EXCCAUSE=%d PC=0x%08x A0=0x%08x\n", cause, frame->pc, frame->a[0]);
+  return XTOS_HANDLED;
+}
+#endif // ESPR_EXCEPTION_HANDLER
+
 /**
  * The main entry point in an ESP8266 application.
  * It is where the logic of ESP8266 starts.
  */
 void user_init() {
+#ifdef ESPR_EXCEPTION_HANDLER
+  // not fixable _xtos_set_exception_handler(EXCCAUSE_UNALIGNED, unaligned_handler);
+  _xtos_set_exception_handler(EXCCAUSE_LOAD_STORE_ERROR, unaligned_handler);
+#endif
   system_timer_reinit(); // use microsecond os_timer_*
 
   user_uart_init();

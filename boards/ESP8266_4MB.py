@@ -29,6 +29,7 @@ info = {
      'CRYPTO',
      'NEOPIXEL',
      #'FILESYSTEM',
+     'EXCEPTION_HANDLER',
    ],
    'makefile' : [
      'FLASH_4MB=1',

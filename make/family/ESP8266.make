@@ -117,6 +117,10 @@ SOURCES += targets/esp8266/uart.c \
 	targets/esp8266/esp8266_board_utils.c \
 	libs/network/esp8266/network_esp8266.c
 
+ifdef USE_EXCEPTION_HANDLER
+DEFINES += -DESPR_EXCEPTION_HANDLER
+endif
+
 ifdef DEBUG
 SOURCES += 	targets/esp8266/gdbstub.c \
 	targets/esp8266/gdbstub-entry.S 
