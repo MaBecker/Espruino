@@ -73,3 +73,17 @@ void ets_bzero(void *s, size_t n);
     } while (0)
 
 #endif
+
+#ifdef ESPR_EXCEPTION_HANDLER
+#include <xtensa/corebits.h>
+#define XTOS_UNHANDLED ((void *)0)
+#define XTOS_HANDLED   ((void *)1)
+typedef struct {
+    uint32_t pc;  // Program Counter where the crash happened
+    uint32_t ps;  // Processor State register
+    uint32_t a;   // Changed from a[16] to match frame->a syntax
+    uint32_t sar; // Shift Amount Register
+} XtExcFrame;
+typedef void* xtos_handler_arg_t;
+extern void _xtos_set_exception_handler(int cause, void *handler);
+#endif
