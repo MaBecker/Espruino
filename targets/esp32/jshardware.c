@@ -84,6 +84,12 @@
 #include "jshardwareI2c.h"
 #include "jshardwareSpi.h"
 
+#if defined(CONFIG_IDF_TARGET_ESP32) && defined(CONFIG_RTC_CLK_SRC_INT_RC)
+  #include "soc/soc.h"
+  #include "soc/rtc_io_reg.h"
+  #include "soc/gpio_reg.h" // Für den digitalen Eingangspuffer-Fix
+#endif
+
 #define FLASH_MAX (4*1024*1024) //4MB
 #define FLASH_PAGE_SHIFT 12 // Shift is much faster than division by 4096 (size of page)
 #define FLASH_PAGE ((uint32_t)1<<FLASH_PAGE_SHIFT)  //4KB
@@ -182,6 +188,12 @@ void jshPinDefaultPullup() {
   jshPinSetStateRange(18,18,JSHPINSTATE_GPIO_IN_PULLUP);
 #else
   jshPinSetStateRange(18,19,JSHPINSTATE_GPIO_IN_PULLUP);
+  #if defined(CONFIG_RTC_CLK_SRC_INT_RC) && defined(SET_GPIO32_33_DIGITAL)
+    REG_SET_BIT(RTC_IO_XTAL_32K_PAD_REG, RTC_IO_DRES_XTAL_32K_V);
+    REG_CLR_BIT(RTC_IO_XTAL_32K_PAD_REG, RTC_IO_X32P_MUX_SEL); // GPIO 32 -> Digital
+    REG_CLR_BIT(RTC_IO_XTAL_32K_PAD_REG, RTC_IO_X32N_MUX_SEL); // GPIO 33 -> Digital
+    jshPinSetStateRange(32,33,JSHPINSTATE_GPIO_IN_PULLUP);
+  #endif
 #endif
   jshPinSetStateRange(21,22,JSHPINSTATE_GPIO_IN_PULLUP);
   jshPinSetStateRange(25,27,JSHPINSTATE_GPIO_IN_PULLUP);

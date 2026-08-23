@@ -14,34 +14,35 @@ This file is part of Espruino, a JavaScript interpreter for Microcontrollers
  * ESP32 specific exposed components for neopixel.
  * ----------------------------------------------------------------------------
  */
-
 #include <stdio.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <driver/gpio.h>
+#include <esp_idf_version.h> // Explizites Einbinden für sichere Makro-Prüfung
 
-// IDF version-specific includes
 #if ESP_IDF_VERSION_MAJOR >= 5
-  #include "driver/rmt_tx.h"
-  #include "driver/rmt_encoder.h"
-  #include "hal/rmt_types.h"
-  #include "esp_intr_alloc.h"
-  static rmt_channel_handle_t neopixel_tx_chan = NULL;
-  static rmt_encoder_handle_t neopixel_copy_encoder = NULL;
-  static gpio_num_t neopixel_gpio_num = GPIO_NUM_NC;
+  #include <driver/rmt_tx.h>
+  #include <driver/rmt_encoder.h>
+  #include <hal/rmt_types.h>
+  #include <esp_intr_alloc.h>
 #else
   #include <soc/rmt_struct.h>
   #include <soc/gpio_sig_map.h>
-  #include "esp_intr.h"
   #include <driver/rmt.h>
-  #if ESP_IDF_VERSION_MAJOR >= 4
-  #else
+  #include "esp_intr.h"
+  #if ESP_IDF_VERSION_MAJOR < 4
     #include <soc/dport_reg.h>
   #endif
 #endif
 
 #include "esp32_neopixel.h"
 #include "jshardware.h"  // For jshGetPinFromVar
+
+#if ESP_IDF_VERSION_MAJOR >= 5
+  static rmt_channel_handle_t neopixel_tx_chan = NULL;
+  static rmt_encoder_handle_t neopixel_copy_encoder = NULL;
+  static gpio_num_t           neopixel_gpio_num = GPIO_NUM_NC;
+#endif
 
 // Common constants
 #define RMTCHANNEL  0
@@ -88,18 +89,22 @@ int neopixelConfiguredGPIO = -1;
 
 #if ESP_IDF_VERSION_MAJOR >= 5
 
+extern void esp_rom_gpio_connect_out_signal(uint32_t gpio_num, uint32_t signal_idx, bool out_inv, bool oen_inv);
+
 static esp_err_t neopixel_rmt_init_v5(gpio_num_t gpio_num) {
   if (neopixelConfiguredGPIO == (int)gpio_num) {
     if (neopixel_tx_chan != NULL && neopixel_gpio_num == gpio_num) {
       return ESP_OK;
     }
   }
-  
   if (neopixel_tx_chan != NULL) {
     rmt_disable(neopixel_tx_chan);
     rmt_del_channel(neopixel_tx_chan);
     if (neopixel_copy_encoder) {
       rmt_del_encoder(neopixel_copy_encoder);
+    }
+    if (neopixel_gpio_num != GPIO_NUM_NC) {
+      esp_rom_gpio_connect_out_signal((uint32_t)neopixel_gpio_num, 256, false, false);
     }
     neopixel_tx_chan = NULL;
     neopixel_copy_encoder = NULL;
@@ -127,6 +132,7 @@ static esp_err_t neopixel_rmt_init_v5(gpio_num_t gpio_num) {
   
   neopixel_gpio_num = gpio_num;
   neopixelConfiguredGPIO = (int)gpio_num;
+  rmt_tx_wait_all_done(neopixel_tx_chan, pdMS_TO_TICKS(100));
   return ESP_OK;
 }
 
@@ -189,7 +195,6 @@ static bool neopixel_write_v5(gpio_num_t gpio_num, unsigned char *rgbData, size_
   free(symbols);
   
   if (ret != ESP_OK) return false;
-  // rmt_tx_wait_all_done(neopixel_tx_chan, pdMS_TO_TICKS(100));
   return true;
 }
 
@@ -294,7 +299,7 @@ void neopixel_init(int gpioNum) {
   if (neopixelConfiguredGPIO != gpioNum) {
     if (neopixelConfiguredGPIO != -1) {
       rmt_driver_uninstall(RMTCHANNEL);
-      gpio_matrix_out(neopixelConfiguredGPIO, SIG_GPIO_OUT_IDX, 0, 0);
+      esp_rom_gpio_connect_out_signal((uint32_t)neopixel_gpio_num, 256, false, false);
     }
     neopixelConfiguredGPIO = gpioNum;
     rmt_config_t config = RMT_DEFAULT_CONFIG_TX(gpioNum, RMTCHANNEL);
@@ -319,7 +324,7 @@ void neopixel_init(int gpioNum) {
   DPORT_CLEAR_PERI_REG_MASK(DPORT_PERIP_RST_EN_REG, DPORT_RMT_RST);
   if (neopixelConfiguredGPIO != gpioNum) {
     if (neopixelConfiguredGPIO != -1) {
-      gpio_matrix_out(neopixelConfiguredGPIO,SIG_GPIO_OUT_IDX,0,0);
+      esp_rom_gpio_connect_out_signal((uint32_t)neopixel_gpio_num, 256, false, false);
     }
     neopixelConfiguredGPIO = gpioNum;
   }
