@@ -299,7 +299,7 @@ void neopixel_init(int gpioNum) {
   if (neopixelConfiguredGPIO != gpioNum) {
     if (neopixelConfiguredGPIO != -1) {
       rmt_driver_uninstall(RMTCHANNEL);
-      esp_rom_gpio_connect_out_signal((uint32_t)neopixel_gpio_num, 256, false, false);
+      gpio_matrix_out(neopixelConfiguredGPIO, SIG_GPIO_OUT_IDX, 0, 0);
     }
     neopixelConfiguredGPIO = gpioNum;
     rmt_config_t config = RMT_DEFAULT_CONFIG_TX(gpioNum, RMTCHANNEL);
@@ -324,7 +324,7 @@ void neopixel_init(int gpioNum) {
   DPORT_CLEAR_PERI_REG_MASK(DPORT_PERIP_RST_EN_REG, DPORT_RMT_RST);
   if (neopixelConfiguredGPIO != gpioNum) {
     if (neopixelConfiguredGPIO != -1) {
-      esp_rom_gpio_connect_out_signal((uint32_t)neopixel_gpio_num, 256, false, false);
+      gpio_matrix_out(neopixelConfiguredGPIO,SIG_GPIO_OUT_IDX,0,0);
     }
     neopixelConfiguredGPIO = gpioNum;
   }
