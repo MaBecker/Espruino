@@ -13,6 +13,7 @@
  */
 
 #include <stdio.h>
+#include <string.h>
 
 #include "esp_wifi.h"
 #include "BLE/esp32_gap_func.h"
@@ -79,13 +80,6 @@ void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
     }
     case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT:{
       blePeriphConnectionInterval = param->update_conn_params.conn_int;
-      /*jsWarn("update connection params: status = %d, min_int = %d, max_int = %d, conn_int = %d, latency = %d, timeout = %d",
-                  param->update_conn_params.status,
-                  param->update_conn_params.min_int,
-                  param->update_conn_params.max_int,
-                  param->update_conn_params.conn_int,
-                  param->update_conn_params.latency,
-                  param->update_conn_params.timeout);*/
       break;
     }
     case ESP_GAP_BLE_SEC_REQ_EVT:{
@@ -156,22 +150,119 @@ uint32_t jsble_advertising_update_scanresponse(char *dPtr, unsigned int dLen) {
     return 0xDEAD;
 }
 
+/* Replace the default empty manufacturer AD structure with string manufacturer
+ * data. The common advertising-data builder accepts iterable values here, but
+ * the documented API also accepts strings (for example JSON.stringify(...)). */
+static esp_err_t bluetooth_gap_add_string_manufacturer_data(uint8_t *data, size_t *dataLen, JsVar *options) {
+  JsVar *manufacturerData = jsvObjectGetChildIfExists(options, "manufacturerData");
+  if (!jsvIsString(manufacturerData)) {
+    jsvUnLock(manufacturerData);
+    return ESP_OK;
+  }
+
+  bool includeManufacturer = true;
+  uint16_t manufacturerId = 0x0590;
+  JsVar *manufacturer = jsvObjectGetChildIfExists(options, "manufacturer");
+  if (manufacturer) {
+    if (!jsvGetBool(manufacturer))
+      includeManufacturer = false;
+    else
+      manufacturerId = (uint16_t)jsvGetInteger(manufacturer);
+  }
+  jsvUnLock(manufacturer);
+  if (!includeManufacturer) {
+    jsvUnLock(manufacturerData);
+    return ESP_OK;
+  }
+
+  JSV_GET_AS_CHAR_ARRAY(manufacturerPtr, manufacturerLen, manufacturerData);
+  if (!manufacturerPtr) {
+    jsvUnLock(manufacturerData);
+    return ESP_ERR_INVALID_ARG;
+  }
+  if (manufacturerLen + 4 > ESPR_MAX_ADVERTISEMENT_DATA) {
+    jsvUnLock(manufacturerData);
+    return ESP_ERR_INVALID_SIZE;
+  }
+
+  uint8_t rebuilt[ESPR_MAX_ADVERTISEMENT_DATA];
+  size_t rebuiltLen = 0;
+  bool added = false;
+  size_t offset = 0;
+  while (offset < *dataLen) {
+    uint8_t fieldLen = data[offset];
+    size_t fullLen = (size_t)fieldLen + 1;
+    if (!fieldLen || offset + fullLen > *dataLen) break;
+
+    bool isManufacturer = fieldLen >= 3 && data[offset + 1] == 0xFF;
+    if (isManufacturer && !added) {
+      size_t replacementLen = manufacturerLen + 4;
+      if (rebuiltLen + replacementLen > sizeof(rebuilt)) {
+        jsvUnLock(manufacturerData);
+        return ESP_ERR_INVALID_SIZE;
+      }
+      rebuilt[rebuiltLen++] = (uint8_t)(manufacturerLen + 3);
+      rebuilt[rebuiltLen++] = 0xFF;
+      rebuilt[rebuiltLen++] = (uint8_t)(manufacturerId & 0xFF);
+      rebuilt[rebuiltLen++] = (uint8_t)(manufacturerId >> 8);
+      memcpy(rebuilt + rebuiltLen, manufacturerPtr, manufacturerLen);
+      rebuiltLen += manufacturerLen;
+      added = true;
+    } else {
+      if (rebuiltLen + fullLen > sizeof(rebuilt)) {
+        jsvUnLock(manufacturerData);
+        return ESP_ERR_INVALID_SIZE;
+      }
+      memcpy(rebuilt + rebuiltLen, data + offset, fullLen);
+      rebuiltLen += fullLen;
+    }
+    offset += fullLen;
+  }
+  if (!added) {
+    size_t replacementLen = manufacturerLen + 4;
+    if (rebuiltLen + replacementLen > sizeof(rebuilt)) {
+      jsvUnLock(manufacturerData);
+      return ESP_ERR_INVALID_SIZE;
+    }
+    rebuilt[rebuiltLen++] = (uint8_t)(manufacturerLen + 3);
+    rebuilt[rebuiltLen++] = 0xFF;
+    rebuilt[rebuiltLen++] = (uint8_t)(manufacturerId & 0xFF);
+    rebuilt[rebuiltLen++] = (uint8_t)(manufacturerId >> 8);
+    memcpy(rebuilt + rebuiltLen, manufacturerPtr, manufacturerLen);
+    rebuiltLen += manufacturerLen;
+  }
+  memcpy(data, rebuilt, rebuiltLen);
+  *dataLen = rebuiltLen;
+  jsvUnLock(manufacturerData);
+  return ESP_OK;
+}
+
 esp_err_t bluetooth_gap_setAdvertising(JsVar *advArray) {
   if(!ESP32_Get_NVS_Status(ESP_NETWORK_BLE))
     return 0; // ESP32.enableBLE(false) - we return 0 here so we don't output an error message at boot
   esp_err_t ret;
   JsVar *allocatedData = 0;
   if(!advArray) { // work out what data to use
-    allocatedData = _jswrap_ble_getAdvertisingData(NULL, NULL, true/*for setAdvertising*/);
+    JsVar *options = jsvObjectGetChildIfExists(execInfo.hiddenRoot, BLE_NAME_ADVERTISE_OPTIONS);
+    allocatedData = _jswrap_ble_getAdvertisingData(NULL, options, true/*for setAdvertising*/);
+    jsvUnLock(options);
     advArray = allocatedData;
   }
   JSV_GET_AS_CHAR_ARRAY(advPtr, advLen, advArray);
-  if (advPtr) ret = esp_ble_gap_config_adv_data_raw(advPtr, advLen);
-  else ret = ESP_ERR_NOT_FOUND;
+  uint8_t advData[ESPR_MAX_ADVERTISEMENT_DATA];
+  if (advPtr && advLen <= sizeof(advData)) {
+    memcpy(advData, advPtr, advLen);
+    advLen = (unsigned int)advLen;
+    JsVar *options = jsvObjectGetChildIfExists(execInfo.hiddenRoot, BLE_NAME_ADVERTISE_OPTIONS);
+    ret = bluetooth_gap_add_string_manufacturer_data(advData, &advLen, options);
+    jsvUnLock(options);
+    if (ret == ESP_OK) ret = esp_ble_gap_config_adv_data_raw(advData, advLen);
+  } else {
+    ret = ESP_ERR_NOT_FOUND;
+  }
   jsvUnLock(allocatedData);
   if (ret) {
     jsWarn("bluetooth_gap_setAdvertising failed, error code = %x", ret);
   }
   return ret;
 }
-
