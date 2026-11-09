@@ -38,8 +38,8 @@
  #include <fcntl.h>
  #include <stdio.h>
 
- typedef struct sockaddr_in sockaddr_in;
- typedef int SOCKET;
+  typedef struct sockaddr_in sockaddr_in;
+  typedef int SOCKET;
 #endif
 
 #define closesocket(SOCK) close(SOCK)
@@ -114,9 +114,9 @@ int net_esp32_createsocket(JsNetwork *net, SocketType socketType, uint32_t host,
       #endif
        if (err != EINPROGRESS &&
            err != EWOULDBLOCK) {
-         jsError("Connect failed (err %d)", err);
-         closesocket(sckt);
-         return -1;
+          jsError("Connect failed (err %d)", err);
+          closesocket(sckt);
+          return -1;
        }
       }
     }
@@ -134,7 +134,7 @@ int net_esp32_createsocket(JsNetwork *net, SocketType socketType, uint32_t host,
       int optval = 1;
       if (setsockopt(sckt,SOL_SOCKET,SO_REUSEADDR,(const char *)&optval,sizeof(optval)) < 0) {
         jsDebug(DBG_INFO, "setsockopt(SO_REUSADDR) failed\n");
-      }  
+      }
 #ifdef SO_REUSEPORT
       if (setsockopt(sckt,SOL_SOCKET,SO_REUSEPORT,(const char *)&optval,sizeof(optval)) < 0) {
         jsDebug(DBG_INFO, "setsockopt(SO_REUSPORT) failed\n");
@@ -187,6 +187,17 @@ int net_esp32_createsocket(JsNetwork *net, SocketType socketType, uint32_t host,
         closesocket(sckt);
         return -1;
       }
+    }
+  }
+
+  if (!(socketType & ST_UDP)) {
+    int flags = fcntl(sckt, F_GETFL, 0);
+    if (flags >= 0) {
+      if (fcntl(sckt, F_SETFL, flags | O_NONBLOCK) < 0) {
+        jsDebug(DBG_INFO, "fcntl(F_SETFL, O_NONBLOCK) failed on ESP32 socket\n");
+      }
+    } else {
+      jsDebug(DBG_INFO, "fcntl(F_GETFL) failed on ESP32 socket\n");
     }
   }
 
@@ -277,37 +288,38 @@ int net_esp32_recv(JsNetwork *net, SocketType socketType, int sckt, void *buf, s
 /// Send data if possible. returns nBytes on success, 0 on no data, or -1 on failure
 int net_esp32_send(JsNetwork *net, SocketType socketType, int sckt, const void *buf, size_t len) {
   NOT_USED(net);
-  fd_set writefds;
-  FD_ZERO(&writefds);
-  FD_SET(sckt, &writefds);
-  struct timeval time;
-  time.tv_sec = 0;
-  time.tv_usec = 0;
-  int n = select(sckt+1, 0, &writefds, 0, &time);
-  if (n==SOCKET_ERROR ) {
-     // we probably disconnected so just get rid of this
-    return -1;
-  } else if (FD_ISSET(sckt, &writefds)) {
-    int flags = 0;
-#if !defined(SO_NOSIGPIPE) && defined(MSG_NOSIGNAL)
-    flags |= MSG_NOSIGNAL;
-#endif
-    if (socketType & ST_UDP) {
-      JsNetUDPPacketHeader *header = (JsNetUDPPacketHeader*)buf;
-      sockaddr_in sin;
-      sin.sin_family = AF_INET;
-      sin.sin_addr.s_addr = *(in_addr_t*)&header->host;
-      sin.sin_port = htons(header->port);
 
-      DBG("Send %d %x:%d", len - sizeof(JsNetUDPPacketHeader), *(uint32_t*)&header->host, header->port);
-      n = (int)sendto(sckt, buf + sizeof(JsNetUDPPacketHeader), header->length, flags, (struct sockaddr *)&sin, sizeof(sockaddr_in)) + sizeof(JsNetUDPPacketHeader);
-      DBG("Send bytes %d",  n);
-    } else {
-      n = (int)send(sckt, buf, len, flags);
+  int flags = 0;
+#if !defined(SO_NOSIGPIPE) && defined(MSG_NOSIGNAL)
+  flags |= MSG_NOSIGNAL;
+#endif
+#ifdef MSG_DONTWAIT
+  flags |= MSG_DONTWAIT;
+#endif
+
+  if (socketType & ST_UDP) {
+    JsNetUDPPacketHeader *header = (JsNetUDPPacketHeader*)buf;
+    sockaddr_in sin;
+    memset(&sin, 0, sizeof(sin));
+    sin.sin_family = AF_INET;
+    sin.sin_addr.s_addr = *(in_addr_t*)&header->host;
+    sin.sin_port = htons(header->port);
+
+    int n = (int)sendto(sckt, buf + sizeof(JsNetUDPPacketHeader), header->length, flags,
+                       (struct sockaddr *)&sin, sizeof(sockaddr_in));
+    if (n < 0) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
+      return -1;
     }
-    return n;
-  } else
-    return 0; // just not ready
+    return n + sizeof(JsNetUDPPacketHeader);
+  }
+
+  int n = (int)send(sckt, buf, len, flags);
+  if (n < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
+    return -1;
+  }
+  return n;
 }
 
 void netSetCallbacks_esp32(JsNetwork *net) {
