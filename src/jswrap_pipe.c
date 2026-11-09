@@ -38,7 +38,7 @@ static JsVar* pipeGetArray(bool create) {
 static void handlePipeClose(JsVar *arr, JsvObjectIterator *it, JsVar* pipe) {
   jsiQueueObjectCallbacks(pipe, JS_EVENT_PREFIX"complete", &pipe, 1);
   // Check the source to see if there was more data... It may not be a stream,
-  // but if it is and it has data it should have a a STREAM_BUFFER_NAME field
+  // but if it is and has data it should have a a STREAM_BUFFER_NAME field
   JsVar *source = jsvObjectGetChildIfExists(pipe,"source");
   JsVar *destination = jsvObjectGetChildIfExists(pipe,"destination");
   if (source && destination) {
@@ -210,7 +210,6 @@ static void jswrap_pipe_close_listener(JsVar *destination, const char *name) {
       JsVar *pipe = jsvObjectIteratorGetValue(&it);
       JsVar *dst = jsvObjectGetChildIfExists(pipe,name);
       if (dst == destination) {
-        // found it! said wait to false
         handlePipeClose(arr, &it, pipe);
       }
       jsvUnLock2(dst, pipe);
@@ -245,7 +244,7 @@ type PipeOptions = {
   "params" : [
     ["source","JsVar","The source file/stream that will send content."],
     ["destination","JsVar","The destination file/stream that will receive content from the source."],
-    ["options","JsVar",["[optional] An object `{ chunkSize : int=64, end : bool=true, complete : function }`","chunkSize : The amount of data to pipe from source to destination at a time","complete : a function to call when the pipe activity is complete","end : call the 'end' function on the destination when the source is finished"]]
+    ["options","JsVar",["[optional] An object `{ chunkSize : int=0, end : bool=true, complete : function }`","chunkSize : The amount of data to pipe from source to destination at a time (0 means all currently available data)","complete : a function to call when the pipe activity is complete","end : call the 'end' function on the destination when the source is finished"]]
   ],
   "typescript": "pipe(destination: any, options?: PipeOptions): void"
 }
@@ -258,7 +257,7 @@ void jswrap_pipe(JsVar* source, JsVar* dest, JsVar* options) {
   JsVar *arr = pipeGetArray(true);
   if (pipe && arr) {// out of memory?
     if (jsvIsString(source)) { // Single-line 'StringStream' object to add ability to stream from Strings
-      JsVar *stream = jspExecuteJSFunctionCode("s","var p=0;return{read:function(l){return s.substring(p,p+=l)||undefined;}}",0,NULL,1,&source);
+      JsVar *stream = jspExecuteJSFunctionCode("s","var p=0;return{read:function(l){var n=l>0?p+l:s.length;var d=s.substring(p,n);p+=d.length;return d||undefined;}}",0,NULL,1,&source);
       jsvUnLock(source);
       source = stream;
     }
@@ -266,7 +265,7 @@ void jswrap_pipe(JsVar* source, JsVar* dest, JsVar* options) {
     JsVar *writeFunc = jspGetNamedField(dest, "write", false);
     if(jsvIsFunction(readFunc)) {
       if(jsvIsFunction(writeFunc)) {
-        JsVarInt chunkSize = 64;
+        JsVarInt chunkSize = 0;
         bool callEnd = true;
         // parse Options Object
         if (jsvIsObject(options)) {
@@ -280,10 +279,10 @@ void jswrap_pipe(JsVar* source, JsVar* dest, JsVar* options) {
           if (c) callEnd = jsvGetBoolAndUnLock(c);
           c = jsvObjectGetChildIfExists(options, "chunkSize");
           if (c) {
-            if (jsvIsNumeric(c) && jsvGetInteger(c)>0)
+            if (jsvIsNumeric(c) && jsvGetInteger(c)>=0)
               chunkSize = jsvGetInteger(c);
             else
-              jsExceptionHere(JSET_TYPEERROR, "chunkSize must be an integer > 0");
+              jsExceptionHere(JSET_TYPEERROR, "chunkSize must be an integer >= 0");
             jsvUnLock(c);
           }
         } else if (!jsvIsUndefined(options)) {
@@ -310,4 +309,3 @@ void jswrap_pipe(JsVar* source, JsVar* dest, JsVar* options) {
   }
   jsvUnLock3(arr, pipe, source);
 }
-
