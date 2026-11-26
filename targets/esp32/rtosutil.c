@@ -45,6 +45,12 @@ ESP32Timer_t ESP32Timers[timerMax];
   #define TIMER_ALARM_EN(TIMER_N)  (TIMERG0.hw_timer[TIMER_N].config.tn_alarm_en = 1)
   #define TIMER_0_INT_CLR()        (TIMERG0.int_clr_timers.t0_int_clr = 1)
   #define TIMER_1_INT_CLR()        (TIMERG0.int_clr_timers.t1_int_clr = 1)
+#elif CONFIG_IDF_TARGET_ESP32P4
+  #define TIMER_FINE_ADJ (((14ULL * (uint64_t)esp_clk_apb_freq()) + (10ULL * TIMER_DIVIDER * 1000000ULL) - 1) / (10ULL * TIMER_DIVIDER * 1000000ULL))
+  #define TIMER_TX_UPDATE(TIMER_N) (TIMERG0.hw_timer[TIMER_N].update.tx_update = 1)
+  #define TIMER_ALARM_EN(TIMER_N) (TIMERG0.hw_timer[TIMER_N].config.tx_alarm_en = 1)
+  #define TIMER_0_INT_CLR() (TIMERG0.int_clr_timers.t0_int_clr = 1)
+  #define TIMER_1_INT_CLR()  (TIMERG0.int_clr_timers.t1_int_clr = 1)
 #else
   #error Unsupported target
 #endif

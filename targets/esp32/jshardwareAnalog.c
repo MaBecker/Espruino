@@ -17,14 +17,14 @@
 #include "jshardwareAnalog.h"
 #include "driver/adc.h"
 #if CONFIG_IDF_TARGET_ESP32
-	#include "driver/dac.h"
-	#include "driver/rtc_io.h"
-#elif CONFIG_IDF_TARGET_ESP32C3
-	typedef enum { DAC_CHAN_0=0 , DAC_CHAN_1=1 } dac_channel_t;
-#elif CONFIG_IDF_TARGET_ESP32S3
-	typedef enum { DAC_CHAN_0=0 , DAC_CHAN_1=1 } dac_channel_t;
+  #include "driver/dac.h"
+  #include "driver/rtc_io.h"
+#elif CONFIG_IDF_TARGET_ESP32C3 || \
+      CONFIG_IDF_TARGET_ESP32S3 || \
+      CONFIG_IDF_TARGET_ESP32P4
+  typedef enum { DAC_CHAN_0=0, DAC_CHAN_1=1 } dac_channel_t;
 #else
-	#error Not an ESP32 or ESP32-S3
+  #error Unsupported ESP32 target
 #endif
 
 #include <stdio.h>
@@ -149,16 +149,16 @@ void writeDAC(Pin pin,uint8_t value){
   }
 #if CONFIG_IDF_TARGET_ESP32
   channel = pinToDacChannel(pin);
-  if(channel >= 0) {
+  if (channel >= 0) {
     dac_output_enable(channel);
     dac_output_voltage(channel, value);
   }
-#elif CONFIG_IDF_TARGET_ESP32C3
-  jsExceptionHere(JSET_ERROR, "not implemented\n");
-#elif CONFIG_IDF_TARGET_ESP32S3
-  jsExceptionHere(JSET_ERROR, "not implemented\n");
+#elif CONFIG_IDF_TARGET_ESP32C3 || \
+      CONFIG_IDF_TARGET_ESP32S3 || \
+      CONFIG_IDF_TARGET_ESP32P4
+  jsExceptionHere(JSET_ERROR, "DAC not implemented on this target\n");
 #else
-	#error Not an ESP32 or ESP32-S3
+  #error Unsupported ESP32 target
 #endif
 }
 

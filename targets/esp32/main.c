@@ -135,6 +135,7 @@ int app_main(void)
   esp_log_level_set("*", ESP_LOG_VERBOSE); // set all components to ERROR level - suppress Wifi Info
   esp_log_level_set("BT_BTM", ESP_LOG_NONE); // Kill "BT_BTM: BTM_GetSecurityFlags false" BLE errors
   esp_log_level_set("gpio", ESP_LOG_WARN); // remove `I gpio:...` info messages
+  esp_log_level_set("esp_hosted", ESP_LOG_VERBOSE); // explicitly enable ESP-Hosted logging tags
 #ifdef RELEASE
   esp_log_level_set("wifi", ESP_LOG_WARN); //  remove `I wifi:...` info messages
 #endif

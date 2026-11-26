@@ -114,8 +114,9 @@ void _jswrap_ESP32_deepSleep_ext0(Pin pin, int level) {
     jsExceptionHere(JSET_ERROR, "EXT0: Invalid pin");
     return;
   }
-#ifdef CONFIG_IDF_TARGET_ESP32C3
-  esp_deep_sleep_enable_gpio_wakeup(esp32DeepSleepGpioMask(pin), level);
+#if CONFIG_IDF_TARGET_ESP32C3 || \
+    CONFIG_IDF_TARGET_ESP32P4
+  esp_deep_sleep_enable_gpio_wakeup( esp32DeepSleepGpioMask(pin), level);
 #else
   esp_sleep_enable_ext0_wakeup(pinToESP32Pin(pin), level);
 #endif

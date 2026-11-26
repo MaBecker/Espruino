@@ -69,6 +69,7 @@
 
 #include "esp_flash.h"
 #include "soc/gpio_reg.h"
+#include "soc/soc_caps.h"
 #include "driver/temperature_sensor.h"
 
 #include "jshardwareI2c.h"
@@ -535,38 +536,29 @@ void jshKickWatchDog() {
 
 bool jshGetPinAddress(Pin pin, JshGetPinAddressResult *result) {
   if (!jshIsPinValid(pin)) return false;
-  if ((pinInfo[pin].port & JSH_PORT_MASK)==JSH_PORTV)
-    return false;
-  gpio_num_t gpioNum = pinToESP32Pin(pin);
-#ifndef CONFIG_IDF_TARGET_ESP32C3
-  bool port0 = true;
-  if (gpioNum >= 32) {
-    gpioNum -= 32;
-    port0 = false;
-  }
-#endif
-  bool negated = pinInfo[pin].port & JSH_PIN_NEGATED;
-  result->mask = 1 << gpioNum;
+  if ((pinInfo[pin].port & JSH_PORT_MASK) == JSH_PORTV) return false;
 
-#ifdef CONFIG_IDF_TARGET_ESP32C3
-  result->in_addr = &GPIO.in.val;
-  result->set_addr = negated ? &GPIO.out_w1tc.val : &GPIO.out_w1ts.val;
-  result->clr_addr = negated ? &GPIO.out_w1ts.val : &GPIO.out_w1tc.val;
-#else
-  if (port0) {
-    result->in_addr = &GPIO.in;
-    result->set_addr = negated ? &GPIO.out_w1tc : &GPIO.out_w1ts;
-    result->clr_addr = negated ? &GPIO.out_w1ts : &GPIO.out_w1tc;
-  }
-  else {
-    result->in_addr = &GPIO.in1.val;
-    result->set_addr = negated ? &GPIO.out1_w1tc.val : &GPIO.out1_w1ts.val;
-    result->clr_addr = negated ? &GPIO.out1_w1ts.val : &GPIO.out1_w1tc.val;
+  int gpioNum = (int)pinToESP32Pin(pin);
+  if (gpioNum < 0 || gpioNum >= SOC_GPIO_PIN_COUNT) return false;
+
+  bool negated = (pinInfo[pin].port & JSH_PIN_NEGATED) != 0;
+
+#if SOC_GPIO_PIN_COUNT > 32
+  if (gpioNum >= 32) {
+    // GPIO 32 and above: second register bank
+    result->mask     = 1u << (gpioNum - 32);
+    result->in_addr  = (volatile uint32_t *)GPIO_IN1_REG;
+    result->set_addr = (volatile uint32_t *)(negated ? GPIO_OUT1_W1TC_REG : GPIO_OUT1_W1TS_REG);
+    result->clr_addr = (volatile uint32_t *)(negated ? GPIO_OUT1_W1TS_REG : GPIO_OUT1_W1TC_REG);
+    return true;
   }
 #endif
+  result->mask     = 1u << gpioNum;
+  result->in_addr  = (volatile uint32_t *)GPIO_IN_REG;
+  result->set_addr = (volatile uint32_t *)(negated ? GPIO_OUT_W1TC_REG : GPIO_OUT_W1TS_REG);
+  result->clr_addr = (volatile uint32_t *)(negated ? GPIO_OUT_W1TS_REG : GPIO_OUT_W1TC_REG);
   return true;
 }
-
 
 /**
  * Get the state of the pin associated with the event flag.
@@ -903,8 +895,18 @@ gpio_num_t pinToESP32Pin(Pin pin) {
   return -1;
 }
 
+#if CONFIG_IDF_TARGET_ESP32P4
+#include "esp_hosted.h"
+#endif
 /// Perform a proper hard-reboot of the device
 void jshReboot() {
+/*#if CONFIG_IDF_TARGET_ESP32P4
+esp_wifi_disconnect();
+esp_wifi_stop();
+esp_wifi_deinit();
+esp_hosted_deinit();
+#endif
+*/
   esp_restart(); // Call the ESP-IDF to restart the ESP32.
 }
 

@@ -19,7 +19,13 @@ else
 			FMW_BIN_NAME = espruino-esp32s3
 			PORT ?= /dev/ttyACM0
 		else
-			$(error Unknown ESP32 chip)
+			ifeq ($(CHIP),ESP32P4)
+				SDKCONFIG = sdkconfig.defaults.esp32p4
+				FMW_BIN_NAME = espruino-esp32p4
+				PORT ?= /dev/ttyACM0
+			else
+				$(error Unknown ESP32 chip)
+			endif
 		endif
 	endif
 endif
@@ -66,6 +72,9 @@ $(CMAKEFILE):
 		driver; do \
 		echo "        $$d" >> $(CMAKEFILE); \
 	done
+	@if [ "$(CHIP)" = "ESP32P4" ]; then \
+		echo "        bt" >> $(CMAKEFILE); \
+	fi
 	@echo ")" >> $(CMAKEFILE)
 	@echo "target_compile_options(\$${COMPONENT_LIB} PUBLIC -DESP_IDF_VERSION_MAJOR=5)" >> $(CMAKEFILE)
 	@echo "target_compile_options(\$${COMPONENT_LIB} PUBLIC $(DEFINES))" >> $(CMAKEFILE)
@@ -85,11 +94,23 @@ $(PROJ_NAME).bin: $(CMAKEFILE) $(PLATFORM_CONFIG_FILE) $(PININFOFILE).h $(PININF
 	$(Q)cp ${ROOT}/targets/esp32/IDF5/sdkconfig.defaults $(BINDIR)
 	$(Q)cat ${ROOT}/targets/esp32/IDF5/${SDKCONFIG} >> $(BINDIR)/sdkconfig.defaults
 	##$(Q)cp ${ROOT}/targets/esp32/IDF5/${SDKCONFIG} $(BINDIR)
+ifeq ($(IDF_TARGET),esp32p4)
+	$(Q)cp ${ROOT}/targets/esp32/IDF5/sdkconfig.defaults.esp32p4 $(BINDIR)
+endif
 	$(Q)cp ${ROOT}/targets/esp32/IDF5/CMakeLists.txt $(BINDIR)
 	$(Q)cp ${ROOT}/targets/esp32/IDF5/partitions.csv $(BINDIR)
 	$(Q)mkdir -p $(BINDIR)/main
 	# Only add mdns dependency if missing
 	$(Q)if [ ! -f "$(BINDIR)/main/idf_component.yml" ] || ! grep -q "espressif/mdns" "$(BINDIR)/main/idf_component.yml"; then cd $(BINDIR) && idf.py add-dependency "espressif/mdns^1.11.0"; fi
+	# ESP32-P4 hosted connectivity dependencies
+  ifeq ($(CHIP),ESP32P4)
+	  $(Q)if ! grep -q "espressif/esp_hosted" "$(BINDIR)/main/idf_component.yml" 2>/dev/null; then \
+		  cd $(BINDIR) && idf.py add-dependency "espressif/esp_hosted^3.1.0"; \
+	  fi
+	  $(Q)if ! grep -q "espressif/esp_wifi_remote" "$(BINDIR)/main/idf_component.yml" 2>/dev/null; then \
+		  cd $(BINDIR) && idf.py add-dependency "espressif/esp_wifi_remote"; \
+	  fi
+  endif
 	cd $(BINDIR) && idf.py build
 	$(Q)cp $(BINDIR)/build/espruino.bin $(PROJ_NAME).bin
 
